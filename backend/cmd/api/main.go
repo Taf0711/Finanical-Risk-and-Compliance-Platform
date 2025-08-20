@@ -10,6 +10,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/websocket/v2"
+	"github.com/google/uuid"
 
 	"github.com/Taf0711/financial-risk-monitor/internal/config"
 	"github.com/Taf0711/financial-risk-monitor/internal/database"
@@ -57,6 +59,7 @@ func main() {
 	transactionHandler := handlers.NewTransactionHandler()
 	riskHandler := handlers.NewRiskHandler(&cfg.Risk)
 	alertHandler := handlers.NewAlertHandler()
+	complianceHandler := handlers.NewComplianceHandler()
 
 	// Initialize WebSocket hub
 	hub := wsHandler.NewHub()
@@ -101,6 +104,7 @@ func main() {
 	transactions.Get("/:id", transactionHandler.GetTransaction)
 	transactions.Post("/", transactionHandler.CreateTransaction)
 	transactions.Put("/:id", transactionHandler.UpdateTransaction)
+	transactions.Put("/:id/status", transactionHandler.UpdateTransactionStatus)
 	transactions.Delete("/:id", transactionHandler.DeleteTransaction)
 
 	// Risk metrics routes
@@ -113,18 +117,67 @@ func main() {
 	// Alert routes
 	alerts := protected.Group("/alerts")
 	alerts.Get("/", alertHandler.GetAlerts)
+	alerts.Get("/active", alertHandler.GetActiveAlerts)
 	alerts.Get("/:id", alertHandler.GetAlert)
 	alerts.Put("/:id/acknowledge", alertHandler.AcknowledgeAlert)
 	alerts.Put("/:id/resolve", alertHandler.ResolveAlert)
 	alerts.Delete("/:id", alertHandler.DeleteAlert)
 
-	// WebSocket endpoint - simple placeholder for now
-	app.Get("/ws", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"message": "WebSocket endpoint - upgrade needed",
-			"info":    "WebSocket functionality available but requires proper HTTP upgrade",
-		})
+	// Compliance routes
+	compliance := protected.Group("/compliance")
+	compliance.Get("/portfolio/:id/check", complianceHandler.CheckCompliance)
+	compliance.Get("/portfolio/:id/position-limits", complianceHandler.CheckPositionLimits)
+	compliance.Post("/transaction/:id/aml-check", complianceHandler.CheckAML)
+
+	// WebSocket endpoint
+	app.Use("/ws", func(c *fiber.Ctx) error {
+		// IsWebSocketUpgrade returns true if the client
+		// requested upgrade to the WebSocket protocol.
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
 	})
+
+	app.Get("/ws", websocket.New(func(c *websocket.Conn) {
+		// Get user ID from query params
+		userID := c.Query("user_id", "anonymous")
+		clientID := uuid.New().String()
+
+		log.Printf("WebSocket client connected: user_id=%s, client_id=%s", userID, clientID)
+
+		// Simple echo implementation for testing
+		defer c.Close()
+
+		// Send welcome message
+		if err := c.WriteJSON(fiber.Map{
+			"type":      "welcome",
+			"message":   "Connected to Financial Risk Monitor WebSocket",
+			"user_id":   userID,
+			"client_id": clientID,
+		}); err != nil {
+			log.Println("WebSocket write error:", err)
+			return
+		}
+
+		// Listen for messages
+		for {
+			// Read message from browser
+			mt, msg, err := c.ReadMessage()
+			if err != nil {
+				log.Println("WebSocket read error:", err)
+				break
+			}
+			log.Printf("WebSocket received: %s", msg)
+
+			// Write message back to browser
+			if err = c.WriteMessage(mt, msg); err != nil {
+				log.Println("WebSocket write error:", err)
+				break
+			}
+		}
+	}))
 
 	// Start mock data generator in development
 	if cfg.App.Env == "development" {

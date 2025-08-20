@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"github.com/gofiber/fiber/v2"
+
+	"github.com/Taf0711/financial-risk-monitor/internal/database"
+	"github.com/Taf0711/financial-risk-monitor/internal/models"
 )
 
 type AlertHandler struct {
@@ -14,11 +17,28 @@ func NewAlertHandler() *AlertHandler {
 
 // GetAlerts returns all alerts
 func (h *AlertHandler) GetAlerts(c *fiber.Ctx) error {
-	// TODO: Implement alert listing
-	return c.JSON(fiber.Map{
-		"message": "Alert listing not yet implemented",
-		"data":    []interface{}{},
-	})
+	var alerts []models.Alert
+
+	if err := database.GetDB().Find(&alerts).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to retrieve alerts",
+		})
+	}
+
+	return c.JSON(alerts)
+}
+
+// GetActiveAlerts returns only active alerts
+func (h *AlertHandler) GetActiveAlerts(c *fiber.Ctx) error {
+	var alerts []models.Alert
+
+	if err := database.GetDB().Where("status = ?", "ACTIVE").Find(&alerts).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to retrieve active alerts",
+		})
+	}
+
+	return c.JSON(alerts)
 }
 
 // GetAlert returns a specific alert
