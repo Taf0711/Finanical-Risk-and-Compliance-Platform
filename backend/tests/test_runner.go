@@ -37,11 +37,9 @@ type TestSuite struct {
 }
 
 var (
-	green  = color.New(color.FgGreen).SprintFunc()
-	red    = color.New(color.FgRed).SprintFunc()
-	yellow = color.New(color.FgYellow).SprintFunc()
-	blue   = color.New(color.FgBlue).SprintFunc()
-	bold   = color.New(color.Bold).SprintFunc()
+	green = color.New(color.FgGreen).SprintFunc()
+	red   = color.New(color.FgRed).SprintFunc()
+	bold  = color.New(color.Bold).SprintFunc()
 )
 
 func main() {
