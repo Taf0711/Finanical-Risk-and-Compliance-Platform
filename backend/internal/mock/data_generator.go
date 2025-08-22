@@ -14,20 +14,26 @@ import (
 
 	"github.com/Taf0711/financial-risk-monitor/internal/database"
 	"github.com/Taf0711/financial-risk-monitor/internal/models"
+	"github.com/Taf0711/financial-risk-monitor/internal/services"
 	"github.com/Taf0711/financial-risk-monitor/internal/websocket"
 )
 
 type MockDataGenerator struct {
-	hub         *websocket.Hub
-	redisClient *redis.Client
-	symbols     []string
-	prices      map[string]float64
+	hub          *websocket.Hub
+	simpleHub    interface{} // We'll use interface{} to avoid import cycle
+	redisClient  *redis.Client
+	riskService  *services.RiskService
+	alertService *services.AlertService
+	symbols      []string
+	prices       map[string]float64
 }
 
 func NewMockDataGenerator(hub *websocket.Hub) *MockDataGenerator {
 	return &MockDataGenerator{
-		hub:         hub,
-		redisClient: database.GetRedis(),
+		hub:          hub,
+		redisClient:  database.GetRedis(),
+		riskService:  services.NewRiskService(),
+		alertService: services.NewAlertService(),
 		symbols: []string{
 			"AAPL", "GOOGL", "MSFT", "AMZN", "TSLA",
 			"JPM", "BAC", "GS", "MS", "WFC",
@@ -50,6 +56,31 @@ func NewMockDataGenerator(hub *websocket.Hub) *MockDataGenerator {
 			"SILVER": 25.00,
 			"OIL":    75.00,
 		},
+	}
+}
+
+// SetSimpleHub sets the simple hub for broadcasting
+func (m *MockDataGenerator) SetSimpleHub(hub interface{}) {
+	m.simpleHub = hub
+}
+
+// broadcastMessage sends message to both hubs
+func (m *MockDataGenerator) broadcastMessage(message websocket.Message) {
+	// Try to broadcast to original hub
+	if m.hub != nil {
+		if err := m.hub.BroadcastToAll(message); err != nil {
+			log.Printf("Warning: Failed to broadcast to hub: %v", err)
+		}
+	}
+
+	// Try to broadcast to simple hub using interface method
+	if m.simpleHub != nil {
+		// Type assertion to call BroadcastToAll
+		if simpleHub, ok := m.simpleHub.(interface{ BroadcastToAll(interface{}) error }); ok {
+			if err := simpleHub.BroadcastToAll(message); err != nil {
+				log.Printf("Warning: Failed to broadcast to simple hub: %v", err)
+			}
+		}
 	}
 }
 
@@ -99,12 +130,14 @@ func (m *MockDataGenerator) generatePriceUpdates() {
 			}
 
 			// Broadcast price updates
+			log.Printf("Generated price updates: %+v", updates)
 			message := websocket.Message{
 				Type: "price_update",
 				Data: updates,
 			}
 
-			m.hub.BroadcastToAll(message)
+			// Broadcast to all hubs
+			m.broadcastMessage(message)
 
 			// Store in Redis
 			ctx := context.Background()
@@ -132,6 +165,7 @@ func (m *MockDataGenerator) generateTransactions() {
 			}
 
 			// Broadcast transaction
+			log.Printf("Generated transaction: %s %s %s @ %s", transaction.TransactionType, transaction.Symbol, transaction.Quantity.String(), transaction.Price.String())
 			message := websocket.Message{
 				Type: "new_transaction",
 				Data: map[string]interface{}{
@@ -140,7 +174,8 @@ func (m *MockDataGenerator) generateTransactions() {
 				},
 			}
 
-			m.hub.BroadcastToAll(message)
+			// Broadcast to all hubs
+			m.broadcastMessage(message)
 		}
 	}
 }
@@ -179,43 +214,95 @@ func (m *MockDataGenerator) generateRiskMetrics() {
 	for {
 		select {
 		case <-ticker.C:
-			// Generate VaR metric
-			varValue := 50000 + rand.Float64()*50000 // $50k - $100k
-			varMetric := models.RiskMetric{
-				ID:              uuid.New(),
-				PortfolioID:     uuid.New(),
-				MetricType:      "VAR",
-				Value:           decimal.NewFromFloat(varValue),
-				Threshold:       decimal.NewFromFloat(75000),
-				Status:          m.getRiskStatus(varValue, 75000),
-				CalculatedAt:    time.Now(),
-				TimeHorizon:     1,
-				ConfidenceLevel: decimal.NewFromFloat(0.95),
+			// Get existing portfolios to generate metrics for
+			var portfolios []models.Portfolio
+			if err := database.GetDB().Find(&portfolios).Error; err != nil {
+				log.Printf("Warning: failed to fetch portfolios: %v", err)
+				continue
 			}
 
-			// Generate Liquidity Ratio
-			liquidityRatio := rand.Float64() // 0-100%
-			liquidityMetric := models.RiskMetric{
-				ID:           uuid.New(),
-				PortfolioID:  uuid.New(),
-				MetricType:   "LIQUIDITY_RATIO",
-				Value:        decimal.NewFromFloat(liquidityRatio),
-				Threshold:    decimal.NewFromFloat(0.3),
-				Status:       m.getLiquidityStatus(liquidityRatio),
-				CalculatedAt: time.Now(),
+			if len(portfolios) == 0 {
+				log.Println("No portfolios found, skipping risk metric generation")
+				continue
+			}
+
+			// Pick a random portfolio
+			portfolio := portfolios[rand.Intn(len(portfolios))]
+
+			// Calculate actual VaR using RiskService
+			varMetric, err := m.riskService.CalculatePortfolioVAR(portfolio.ID)
+			if err != nil {
+				log.Printf("Warning: failed to calculate VaR for portfolio %s: %v", portfolio.ID, err)
+			}
+
+			// Calculate actual Liquidity using RiskService
+			liquidityMetric, err := m.riskService.CalculatePortfolioLiquidity(portfolio.ID)
+			if err != nil {
+				log.Printf("Warning: failed to calculate liquidity for portfolio %s: %v", portfolio.ID, err)
+			}
+
+			// Skip this iteration if both metrics are nil (empty portfolio)
+			if varMetric == nil && liquidityMetric == nil {
+				log.Printf("Skipping risk metric generation for empty portfolio %s", portfolio.ID)
+				continue
+			}
+
+			// Check if we need to generate alerts for breaches
+			if varMetric != nil && varMetric.Status != "SAFE" {
+				err := m.alertService.CreateRiskBreachAlert(
+					portfolio.ID,
+					"VAR",
+					varMetric.Value.InexactFloat64(),
+					varMetric.Threshold.InexactFloat64(),
+				)
+				if err != nil {
+					log.Printf("Warning: failed to create VaR alert: %v", err)
+				}
+			}
+
+			if liquidityMetric != nil && liquidityMetric.Status != "SAFE" {
+				err := m.alertService.CreateRiskBreachAlert(
+					portfolio.ID,
+					"LIQUIDITY_RATIO",
+					liquidityMetric.Value.InexactFloat64(),
+					liquidityMetric.Threshold.InexactFloat64(),
+				)
+				if err != nil {
+					log.Printf("Warning: failed to create liquidity alert: %v", err)
+				}
 			}
 
 			// Broadcast risk metrics
+			var varStr, varStatus, liquidityStr, liquidityStatus string
+			if varMetric != nil {
+				varStr = varMetric.Value.String()
+				varStatus = varMetric.Status
+			} else {
+				varStr = "N/A"
+				varStatus = "N/A"
+			}
+			if liquidityMetric != nil {
+				liquidityStr = liquidityMetric.Value.String()
+				liquidityStatus = liquidityMetric.Status
+			} else {
+				liquidityStr = "N/A"
+				liquidityStatus = "N/A"
+			}
+			
+			log.Printf("Generated risk metrics for portfolio %s - VaR: %s (%s), Liquidity: %s (%s)",
+				portfolio.ID, varStr, varStatus, liquidityStr, liquidityStatus)
+
 			message := websocket.Message{
 				Type: "risk_update",
 				Data: map[string]interface{}{
-					"var":       varMetric,
-					"liquidity": liquidityMetric,
-					"timestamp": time.Now().Unix(),
+					"portfolio_id": portfolio.ID,
+					"var":          varMetric,
+					"liquidity":    liquidityMetric,
+					"timestamp":    time.Now().Unix(),
 				},
 			}
 
-			m.hub.BroadcastToAll(message)
+			m.broadcastMessage(message)
 		}
 	}
 }
@@ -247,56 +334,80 @@ func (m *MockDataGenerator) generateAlerts() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	alertTypes := []struct {
-		Type        string
-		Severity    string
-		Title       string
-		Description string
-		Source      string
-	}{
-		{
-			Type:        "RISK_BREACH",
-			Severity:    "HIGH",
-			Title:       "VaR Limit Exceeded",
-			Description: "Portfolio Value at Risk exceeds threshold",
-			Source:      "VAR_CALCULATOR",
-		},
-		{
-			Type:        "COMPLIANCE_VIOLATION",
-			Severity:    "CRITICAL",
-			Title:       "Position Limit Breach",
-			Description: "Single position exceeds 25% of portfolio",
-			Source:      "POSITION_LIMIT_CHECKER",
-		},
-		{
-			Type:        "SUSPICIOUS_ACTIVITY",
-			Severity:    "MEDIUM",
-			Title:       "Unusual Trading Pattern",
-			Description: "High frequency trading detected",
-			Source:      "PATTERN_DETECTOR",
-		},
-	}
-
 	for {
 		select {
 		case <-ticker.C:
-			// Randomly generate an alert
-			if rand.Float64() > 0.7 { // 30% chance
+			// Get existing portfolios to generate alerts for
+			var portfolios []models.Portfolio
+			if err := database.GetDB().Find(&portfolios).Error; err != nil {
+				log.Printf("Warning: failed to fetch portfolios: %v", err)
+				continue
+			}
+
+			if len(portfolios) == 0 {
+				log.Println("No portfolios found, skipping alert generation")
+				continue
+			}
+
+			// Randomly generate an alert (30% chance)
+			if rand.Float64() > 0.7 {
+				portfolio := portfolios[rand.Intn(len(portfolios))]
+
+				alertTypes := []struct {
+					Type        string
+					Severity    string
+					Title       string
+					Description string
+					Source      string
+				}{
+					{
+						Type:        "RISK_BREACH",
+						Severity:    "HIGH",
+						Title:       "VaR Limit Exceeded",
+						Description: "Portfolio Value at Risk exceeds threshold",
+						Source:      "VAR_CALCULATOR",
+					},
+					{
+						Type:        "COMPLIANCE_VIOLATION",
+						Severity:    "CRITICAL",
+						Title:       "Position Limit Breach",
+						Description: "Single position exceeds 25% of portfolio",
+						Source:      "POSITION_LIMIT_CHECKER",
+					},
+					{
+						Type:        "SUSPICIOUS_ACTIVITY",
+						Severity:    "MEDIUM",
+						Title:       "Unusual Trading Pattern",
+						Description: "High frequency trading detected",
+						Source:      "PATTERN_DETECTOR",
+					},
+				}
+
 				alertType := alertTypes[rand.Intn(len(alertTypes))]
 
-				alert := models.Alert{
-					ID:          uuid.New(),
-					PortfolioID: uuid.New(),
+				alert := &models.Alert{
+					PortfolioID: portfolio.ID,
 					AlertType:   alertType.Type,
 					Severity:    alertType.Severity,
 					Title:       alertType.Title,
 					Description: alertType.Description,
 					Source:      alertType.Source,
 					Status:      "ACTIVE",
-					CreatedAt:   time.Now(),
+					TriggeredBy: models.JSON{
+						"mock_generated": true,
+						"portfolio_name": portfolio.Name,
+					},
+				}
+
+				// Store alert in database using AlertService
+				err := m.alertService.CreateAlert(alert)
+				if err != nil {
+					log.Printf("Warning: failed to create alert: %v", err)
+					continue
 				}
 
 				// Broadcast alert
+				log.Printf("Generated alert for portfolio %s: %s - %s", portfolio.ID, alert.Severity, alert.Title)
 				message := websocket.Message{
 					Type: "new_alert",
 					Data: map[string]interface{}{
@@ -305,9 +416,9 @@ func (m *MockDataGenerator) generateAlerts() {
 					},
 				}
 
-				m.hub.BroadcastToAll(message)
+				m.broadcastMessage(message)
 
-				// Store in Redis
+				// Store in Redis for caching
 				ctx := context.Background()
 				alertJSON, _ := json.Marshal(alert)
 				key := fmt.Sprintf("alert:%s", alert.ID)
@@ -318,8 +429,7 @@ func (m *MockDataGenerator) generateAlerts() {
 }
 
 func (m *MockDataGenerator) generateAMLAlert(transaction models.Transaction) {
-	alert := models.Alert{
-		ID:          uuid.New(),
+	alert := &models.Alert{
 		PortfolioID: transaction.PortfolioID,
 		AlertType:   "SUSPICIOUS_ACTIVITY",
 		Severity:    "HIGH",
@@ -327,14 +437,22 @@ func (m *MockDataGenerator) generateAMLAlert(transaction models.Transaction) {
 		Description: fmt.Sprintf("Transaction of %s exceeds AML threshold", transaction.Amount),
 		Source:      "AML_CHECKER",
 		Status:      "ACTIVE",
-		TriggeredBy: map[string]interface{}{
+		TriggeredBy: models.JSON{
 			"transaction_id": transaction.ID,
 			"amount":         transaction.Amount,
 			"symbol":         transaction.Symbol,
+			"mock_generated": true,
 		},
-		CreatedAt: time.Now(),
 	}
 
+	// Store alert in database using AlertService
+	err := m.alertService.CreateAlert(alert)
+	if err != nil {
+		log.Printf("Warning: failed to create AML alert: %v", err)
+		return
+	}
+
+	log.Printf("Generated AML alert for transaction: %s %s", transaction.Amount.String(), transaction.Symbol)
 	message := websocket.Message{
 		Type: "aml_alert",
 		Data: map[string]interface{}{
@@ -344,5 +462,5 @@ func (m *MockDataGenerator) generateAMLAlert(transaction models.Transaction) {
 		},
 	}
 
-	m.hub.BroadcastToAll(message)
+	m.broadcastMessage(message)
 }

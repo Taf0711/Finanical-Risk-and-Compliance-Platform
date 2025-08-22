@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -17,6 +18,7 @@ import (
 	"github.com/Taf0711/financial-risk-monitor/internal/database"
 	"github.com/Taf0711/financial-risk-monitor/internal/handlers"
 	"github.com/Taf0711/financial-risk-monitor/internal/middleware"
+	"github.com/Taf0711/financial-risk-monitor/internal/mock"
 	"github.com/Taf0711/financial-risk-monitor/internal/services"
 	wsHandler "github.com/Taf0711/financial-risk-monitor/internal/websocket"
 )
@@ -64,6 +66,10 @@ func main() {
 	// Initialize WebSocket hub
 	hub := wsHandler.NewHub()
 	go hub.Run()
+
+	// Initialize simple WebSocket hub for Fiber WebSocket connections
+	simpleHub := wsHandler.NewSimpleHub()
+	go simpleHub.Run()
 
 	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -147,41 +153,46 @@ func main() {
 
 		log.Printf("WebSocket client connected: user_id=%s, client_id=%s", userID, clientID)
 
-		// Simple echo implementation for testing
-		defer c.Close()
+		// Register with simple hub
+		simpleHub.RegisterConnection(c)
+		defer simpleHub.UnregisterConnection(c)
 
 		// Send welcome message
-		if err := c.WriteJSON(fiber.Map{
+		welcome := map[string]interface{}{
 			"type":      "welcome",
 			"message":   "Connected to Financial Risk Monitor WebSocket",
 			"user_id":   userID,
 			"client_id": clientID,
-		}); err != nil {
-			log.Println("WebSocket write error:", err)
+			"timestamp": time.Now().Unix(),
+		}
+
+		if err := c.WriteJSON(welcome); err != nil {
+			log.Println("WebSocket welcome error:", err)
 			return
 		}
 
-		// Listen for messages
+		// Keep connection alive and handle incoming messages
 		for {
-			// Read message from browser
 			mt, msg, err := c.ReadMessage()
 			if err != nil {
-				log.Println("WebSocket read error:", err)
+				log.Printf("WebSocket read error for client %s: %v", clientID, err)
 				break
 			}
-			log.Printf("WebSocket received: %s", msg)
+			log.Printf("WebSocket received from %s: %s", clientID, msg)
 
-			// Write message back to browser
+			// Echo message back (optional)
 			if err = c.WriteMessage(mt, msg); err != nil {
-				log.Println("WebSocket write error:", err)
+				log.Printf("WebSocket write error for client %s: %v", clientID, err)
 				break
 			}
 		}
+
+		log.Printf("WebSocket client disconnected: %s", clientID)
 	}))
 
 	// Start mock data generator in development
 	if cfg.App.Env == "development" {
-		go startMockDataGenerator(hub)
+		go startMockDataGenerator(hub, simpleHub)
 	}
 
 	// Graceful shutdown
@@ -203,9 +214,9 @@ func main() {
 	}
 }
 
-func startMockDataGenerator(hub *wsHandler.Hub) {
-	// TODO: Implement mock data generator
-	// generator := services.NewMockDataGenerator(hub)
-	// generator.Start()
-	log.Println("Mock data generator not yet implemented")
+func startMockDataGenerator(hub *wsHandler.Hub, simpleHub *wsHandler.SimpleHub) {
+	log.Println("Starting mock data generator...")
+	generator := mock.NewMockDataGenerator(hub)
+	generator.SetSimpleHub(simpleHub) // We'll need to add this method
+	generator.Start()
 }

@@ -7,59 +7,90 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Taf0711/financial-risk-monitor/internal/config"
-	"github.com/Taf0711/financial-risk-monitor/internal/database"
 	"github.com/Taf0711/financial-risk-monitor/internal/models"
+	"github.com/Taf0711/financial-risk-monitor/internal/services"
 )
 
 type RiskHandler struct {
-	config *config.RiskConfig
+	config      *config.RiskConfig
+	riskService *services.RiskService
 }
 
 func NewRiskHandler(cfg *config.RiskConfig) *RiskHandler {
 	return &RiskHandler{
-		config: cfg,
+		config:      cfg,
+		riskService: services.NewRiskService(),
 	}
 }
 
 // CalculateVAR calculates Value at Risk for a portfolio
 func (h *RiskHandler) CalculateVAR(c *fiber.Ctx) error {
 	portfolioID := c.Params("id")
-	if _, err := uuid.Parse(portfolioID); err != nil {
+	portfolioUUID, err := uuid.Parse(portfolioID)
+	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid portfolio ID",
 		})
 	}
 
-	// Placeholder VaR calculation
+	// Calculate actual VaR
+	riskMetric, err := h.riskService.CalculatePortfolioVAR(portfolioUUID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"portfolio_id":      portfolioID,
-		"var_1_day_95":      -15000.50,
-		"var_10_day_95":     -47500.25,
-		"confidence_level":  0.95,
-		"time_horizon_days": 1,
+		"var_value":         riskMetric.Value,
+		"var_threshold":     riskMetric.Threshold,
+		"status":            riskMetric.Status,
+		"confidence_level":  riskMetric.ConfidenceLevel,
+		"time_horizon_days": riskMetric.TimeHorizon,
 		"currency":          "USD",
-		"calculated_at":     "2025-08-20T15:55:21Z",
+		"calculated_at":     riskMetric.CalculatedAt,
+		"details":           riskMetric.Details,
 	})
 }
 
 // CalculateLiquidityRisk calculates liquidity risk for a portfolio
 func (h *RiskHandler) CalculateLiquidityRisk(c *fiber.Ctx) error {
 	portfolioID := c.Params("id")
-	if _, err := uuid.Parse(portfolioID); err != nil {
+	portfolioUUID, err := uuid.Parse(portfolioID)
+	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid portfolio ID",
 		})
 	}
 
-	// Placeholder liquidity calculation
+	// Calculate actual liquidity risk
+	riskMetric, err := h.riskService.CalculatePortfolioLiquidity(portfolioUUID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	// Extract breakdown from details
+	breakdown := riskMetric.Details["breakdown"].(map[string]interface{})
+	highLiquidity := breakdown["HIGH"].(float64)
+	mediumLiquidity := breakdown["MEDIUM"].(float64)
+	lowLiquidity := breakdown["LOW"].(float64)
+
+	totalValue := riskMetric.Details["portfolio_value"].(float64)
+	liquidAssetsPct := (highLiquidity / totalValue) * 100
+	illiquidAssetsPct := ((mediumLiquidity + lowLiquidity) / totalValue) * 100
+
 	return c.JSON(fiber.Map{
 		"portfolio_id":        portfolioID,
-		"liquidity_ratio":     0.75,
-		"liquidity_score":     "GOOD",
-		"days_to_liquidate":   3.5,
-		"liquid_assets_pct":   65.2,
-		"illiquid_assets_pct": 34.8,
-		"calculated_at":       "2025-08-20T15:55:21Z",
+		"liquidity_ratio":     riskMetric.Value,
+		"liquidity_score":     riskMetric.Status,
+		"days_to_liquidate":   3.5, // This would need actual calculation
+		"liquid_assets_pct":   liquidAssetsPct,
+		"illiquid_assets_pct": illiquidAssetsPct,
+		"calculated_at":       riskMetric.CalculatedAt,
+		"breakdown":           breakdown,
 	})
 }
 
@@ -73,35 +104,31 @@ func (h *RiskHandler) GetRiskMetrics(c *fiber.Ctx) error {
 		})
 	}
 
-	var metrics []models.RiskMetric
-	if err := database.GetDB().Where("portfolio_id = ?", portfolioUUID).Find(&metrics).Error; err != nil {
+	// Get actual risk metrics from database
+	metrics, err := h.riskService.GetPortfolioRiskMetrics(portfolioUUID)
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to retrieve risk metrics",
 		})
 	}
 
 	if len(metrics) == 0 {
-		// Return placeholder data if no metrics exist
-		return c.JSON([]fiber.Map{
-			{
-				"portfolio_id":     portfolioID,
-				"metric_type":      "VAR",
-				"value":            -15000.50,
-				"threshold":        -20000.00,
-				"status":           "OK",
-				"calculated_at":    "2025-08-20T15:55:21Z",
-				"time_horizon":     1,
-				"confidence_level": 0.95,
-			},
-			{
-				"portfolio_id":  portfolioID,
-				"metric_type":   "LIQUIDITY",
-				"value":         0.75,
-				"threshold":     0.30,
-				"status":        "OK",
-				"calculated_at": "2025-08-20T15:55:21Z",
-			},
-		})
+		// Calculate metrics if none exist
+		varMetric, err := h.riskService.CalculatePortfolioVAR(portfolioUUID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to calculate VaR: " + err.Error(),
+			})
+		}
+
+		liquidityMetric, err := h.riskService.CalculatePortfolioLiquidity(portfolioUUID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to calculate liquidity: " + err.Error(),
+			})
+		}
+
+		metrics = []models.RiskMetric{*varMetric, *liquidityMetric}
 	}
 
 	return c.JSON(metrics)
@@ -118,44 +145,15 @@ func (h *RiskHandler) GetRiskHistory(c *fiber.Ctx) error {
 	}
 
 	// Get optional query parameters
-	metricType := c.Query("metric_type", "VAR")
+	metricType := c.Query("metric_type", "")
 	limitStr := c.Query("limit", "30")
 	limit, _ := strconv.Atoi(limitStr)
 
-	var history []models.RiskHistory
-	query := database.GetDB().Where("portfolio_id = ?", portfolioUUID)
-
-	if metricType != "" {
-		query = query.Where("metric_type = ?", metricType)
-	}
-
-	if err := query.Order("recorded_at DESC").Limit(limit).Find(&history).Error; err != nil {
+	// Get actual risk history from service
+	history, err := h.riskService.GetPortfolioRiskHistory(portfolioUUID, metricType, limit)
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to retrieve risk history",
-		})
-	}
-
-	if len(history) == 0 {
-		// Return placeholder historical data if none exists
-		return c.JSON([]fiber.Map{
-			{
-				"portfolio_id": portfolioID,
-				"metric_type":  metricType,
-				"value":        -15000.50,
-				"recorded_at":  "2025-08-20T15:55:21Z",
-			},
-			{
-				"portfolio_id": portfolioID,
-				"metric_type":  metricType,
-				"value":        -14800.25,
-				"recorded_at":  "2025-08-19T15:55:21Z",
-			},
-			{
-				"portfolio_id": portfolioID,
-				"metric_type":  metricType,
-				"value":        -15200.75,
-				"recorded_at":  "2025-08-18T15:55:21Z",
-			},
 		})
 	}
 

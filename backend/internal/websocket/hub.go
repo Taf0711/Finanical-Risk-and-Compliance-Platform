@@ -73,6 +73,16 @@ func (h *Hub) Run() {
 	}
 }
 
+// Register adds a client to the hub
+func (h *Hub) Register(client *Client) {
+	h.register <- client
+}
+
+// Unregister removes a client from the hub
+func (h *Hub) Unregister(client *Client) {
+	h.unregister <- client
+}
+
 // BroadcastToAll sends a message to all connected clients
 func (h *Hub) BroadcastToAll(message interface{}) error {
 	data, err := json.Marshal(message)
