@@ -79,6 +79,11 @@ func main() {
 		})
 	})
 
+	// Serve dashboard at root
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.SendFile("./tests/mock_data_dashboard.html")
+	})
+
 	// API routes
 	api := app.Group("/api/v1")
 

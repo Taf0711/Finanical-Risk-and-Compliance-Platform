@@ -4,27 +4,26 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
-	"github.com/Taf0711/financial-risk-monitor/internal/services"
+	"github.com/Taf0711/financial-risk-monitor/internal/alerts"
+	"github.com/Taf0711/financial-risk-monitor/internal/database"
+	"github.com/Taf0711/financial-risk-monitor/internal/models"
 )
 
 type AlertHandler struct {
-	alertService *services.AlertService
+	alertManager *alerts.AlertManager
 }
 
 func NewAlertHandler() *AlertHandler {
 	return &AlertHandler{
-		alertService: services.NewAlertService(),
+		alertManager: alerts.NewAlertManager(),
 	}
 }
 
 // GetAlerts returns all alerts
 func (h *AlertHandler) GetAlerts(c *fiber.Ctx) error {
-	status := c.Query("status", "")
-	severity := c.Query("severity", "")
-	limit := 100 // Default limit
+	var alerts []models.Alert
 
-	alerts, err := h.alertService.GetAlerts(status, severity, limit)
-	if err != nil {
+	if err := database.GetDB().Find(&alerts).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to retrieve alerts",
 		})
@@ -35,8 +34,9 @@ func (h *AlertHandler) GetAlerts(c *fiber.Ctx) error {
 
 // GetActiveAlerts returns only active alerts
 func (h *AlertHandler) GetActiveAlerts(c *fiber.Ctx) error {
-	alerts, err := h.alertService.GetActiveAlerts()
-	if err != nil {
+	var alerts []models.Alert
+
+	if err := database.GetDB().Where("status = ?", "ACTIVE").Find(&alerts).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to retrieve active alerts",
 		})
@@ -55,8 +55,8 @@ func (h *AlertHandler) GetAlert(c *fiber.Ctx) error {
 		})
 	}
 
-	alert, err := h.alertService.GetAlertByID(alertUUID)
-	if err != nil {
+	var alert models.Alert
+	if err := database.GetDB().First(&alert, alertUUID).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "Alert not found",
 		})
@@ -83,7 +83,7 @@ func (h *AlertHandler) AcknowledgeAlert(c *fiber.Ctx) error {
 		})
 	}
 
-	err = h.alertService.AcknowledgeAlert(alertUUID, userUUID)
+	err = h.alertManager.AcknowledgeAlert(alertUUID, userUUID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to acknowledge alert",
@@ -123,7 +123,7 @@ func (h *AlertHandler) ResolveAlert(c *fiber.Ctx) error {
 		})
 	}
 
-	err = h.alertService.ResolveAlert(alertUUID, userUUID, req.Resolution)
+	err = h.alertManager.ResolveAlert(alertUUID, userUUID, req.Resolution)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to resolve alert",
@@ -145,8 +145,14 @@ func (h *AlertHandler) DeleteAlert(c *fiber.Ctx) error {
 		})
 	}
 
-	err = h.alertService.DeleteAlert(alertUUID)
-	if err != nil {
+	var alert models.Alert
+	if err := database.GetDB().First(&alert, alertUUID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Alert not found",
+		})
+	}
+
+	if err := database.GetDB().Delete(&alert).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete alert",
 		})

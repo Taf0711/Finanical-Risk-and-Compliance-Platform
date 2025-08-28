@@ -29,7 +29,9 @@ func (s *AlertService) CreateAlert(alert *models.Alert) error {
 // GetAlerts returns all alerts with optional filtering
 func (s *AlertService) GetAlerts(status string, severity string, limit int) ([]models.Alert, error) {
 	var alerts []models.Alert
-	query := s.db.Preload("Portfolio")
+	query := s.db.Preload("Portfolio", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, user_id, name, description, total_value, currency, created_at, updated_at")
+	})
 
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -46,7 +48,9 @@ func (s *AlertService) GetAlerts(status string, severity string, limit int) ([]m
 // GetAlertByID returns a specific alert by ID
 func (s *AlertService) GetAlertByID(alertID uuid.UUID) (*models.Alert, error) {
 	var alert models.Alert
-	err := s.db.Preload("Portfolio").First(&alert, alertID).Error
+	err := s.db.Preload("Portfolio", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, user_id, name, description, total_value, currency, created_at, updated_at")
+	}).First(&alert, alertID).Error
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +177,9 @@ func (s *AlertService) GetActiveAlerts() ([]models.Alert, error) {
 // GetAlertsByPortfolio returns alerts for a specific portfolio
 func (s *AlertService) GetAlertsByPortfolio(portfolioID uuid.UUID) ([]models.Alert, error) {
 	var alerts []models.Alert
-	err := s.db.Where("portfolio_id = ?", portfolioID).Preload("Portfolio").Order("created_at DESC").Find(&alerts).Error
+	err := s.db.Where("portfolio_id = ?", portfolioID).Preload("Portfolio", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, user_id, name, description, total_value, currency, created_at, updated_at")
+	}).Order("created_at DESC").Find(&alerts).Error
 	return alerts, err
 }
 

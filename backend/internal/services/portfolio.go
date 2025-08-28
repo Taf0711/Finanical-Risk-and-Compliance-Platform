@@ -35,7 +35,7 @@ type UpdatePortfolioRequest struct {
 // GetUserPortfolios returns all portfolios for a specific user
 func (s *PortfolioService) GetUserPortfolios(userID uuid.UUID) ([]models.Portfolio, error) {
 	var portfolios []models.Portfolio
-	err := s.db.Where("user_id = ?", userID).Find(&portfolios).Error
+	err := s.db.Preload("User").Where("user_id = ?", userID).Find(&portfolios).Error
 	return portfolios, err
 }
 
@@ -44,6 +44,7 @@ func (s *PortfolioService) GetPortfolio(portfolioID, userID uuid.UUID) (*models.
 	var portfolio models.Portfolio
 	err := s.db.Where("id = ? AND user_id = ?", portfolioID, userID).
 		Preload("Positions").
+		Preload("User").
 		First(&portfolio).Error
 
 	if err != nil {

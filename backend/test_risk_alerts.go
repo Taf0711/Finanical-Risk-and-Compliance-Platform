@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"log"
-	"time"
 
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+
+	"github.com/Taf0711/financial-risk-monitor/internal/config"
 	"github.com/Taf0711/financial-risk-monitor/internal/database"
 	"github.com/Taf0711/financial-risk-monitor/internal/models"
 	"github.com/Taf0711/financial-risk-monitor/internal/services"
-	"github.com/google/uuid"
 )
 
 func main() {
@@ -29,7 +31,7 @@ func main() {
 	}
 
 	// Initialize services
-	riskService := services.NewRiskService()
+	riskService := services.NewRiskEngineService()
 	alertService := services.NewAlertService()
 
 	// Create a test portfolio
@@ -110,32 +112,38 @@ func main() {
 
 	// Test VaR calculation
 	fmt.Println("\n--- Testing VaR Calculation ---")
-	varMetric, err := riskService.CalculatePortfolioVAR(portfolio.ID)
+	varRequest := services.VaRCalculationRequest{
+		PortfolioID:     portfolio.ID,
+		ConfidenceLevel: 0.95,
+		TimeHorizon:     1,
+		Method:          "historical",
+	}
+	varResult, err := riskService.CalculateVaR(varRequest)
 	if err != nil {
 		log.Printf("VaR calculation failed: %v", err)
 	} else {
 		fmt.Printf("VaR calculated: %s (Status: %s, Threshold: %s)\n",
-			varMetric.Value.String(), varMetric.Status, varMetric.Threshold.String())
+			varResult.VaRValue.String(), varResult.Status, varResult.Threshold.String())
 	}
 
 	// Test Liquidity calculation
 	fmt.Println("\n--- Testing Liquidity Calculation ---")
-	liquidityMetric, err := riskService.CalculatePortfolioLiquidity(portfolio.ID)
+	liquidityResult, err := riskService.CalculateLiquidityRisk(portfolio.ID)
 	if err != nil {
 		log.Printf("Liquidity calculation failed: %v", err)
 	} else {
-		fmt.Printf("Liquidity calculated: %s (Status: %s, Threshold: %s)\n",
-			liquidityMetric.Value.String(), liquidityMetric.Status, liquidityMetric.Threshold.String())
+		fmt.Printf("Liquidity calculated: %s (Score: %s, Risk Assessment: %s)\n",
+			liquidityResult.LiquidityRatio.String(), liquidityResult.LiquidityScore, liquidityResult.RiskAssessment)
 	}
 
 	// Test Alert generation
 	fmt.Println("\n--- Testing Alert Generation ---")
-	if varMetric != nil && varMetric.Status != "SAFE" {
+	if varResult != nil && varResult.Status != "SAFE" {
 		err := alertService.CreateRiskBreachAlert(
 			portfolio.ID,
 			"VAR",
-			varMetric.Value.InexactFloat64(),
-			varMetric.Threshold.InexactFloat64(),
+			varResult.VaRValue.InexactFloat64(),
+			varResult.Threshold.InexactFloat64(),
 		)
 		if err != nil {
 			log.Printf("Failed to create VaR alert: %v", err)
@@ -158,12 +166,13 @@ func main() {
 
 	// Test getting risk metrics
 	fmt.Println("\n--- Testing Risk Metrics Retrieval ---")
-	metrics, err := riskService.GetPortfolioRiskMetrics(portfolio.ID)
+	var riskMetrics []models.RiskMetric
+	err = database.GetDB().Where("portfolio_id = ?", portfolio.ID).Find(&riskMetrics).Error
 	if err != nil {
 		log.Printf("Failed to get risk metrics: %v", err)
 	} else {
-		fmt.Printf("Found %d risk metrics\n", len(metrics))
-		for _, metric := range metrics {
+		fmt.Printf("Found %d risk metrics\n", len(riskMetrics))
+		for _, metric := range riskMetrics {
 			fmt.Printf("  - %s: %s (Status: %s)\n", metric.MetricType, metric.Value.String(), metric.Status)
 		}
 	}

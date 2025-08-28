@@ -22,7 +22,7 @@ type MockDataGenerator struct {
 	hub          *websocket.Hub
 	simpleHub    interface{} // We'll use interface{} to avoid import cycle
 	redisClient  *redis.Client
-	riskService  *services.RiskService
+	riskService  *services.RiskEngineService
 	alertService *services.AlertService
 	symbols      []string
 	prices       map[string]float64
@@ -32,7 +32,7 @@ func NewMockDataGenerator(hub *websocket.Hub) *MockDataGenerator {
 	return &MockDataGenerator{
 		hub:          hub,
 		redisClient:  database.GetRedis(),
-		riskService:  services.NewRiskService(),
+		riskService:  services.NewRiskEngineService(),
 		alertService: services.NewAlertService(),
 		symbols: []string{
 			"AAPL", "GOOGL", "MSFT", "AMZN", "TSLA",
@@ -159,6 +159,11 @@ func (m *MockDataGenerator) generateTransactions() {
 			// Generate random transaction
 			transaction := m.createMockTransaction()
 
+			// Skip if empty transaction (failed to get portfolio)
+			if transaction.ID == uuid.Nil {
+				continue
+			}
+
 			// Check if it triggers AML flags
 			if transaction.Amount.GreaterThan(decimal.NewFromInt(10000)) {
 				m.generateAMLAlert(transaction)
@@ -189,9 +194,19 @@ func (m *MockDataGenerator) createMockTransaction() models.Transaction {
 	transactionTypes := []string{"BUY", "SELL"}
 	transactionType := transactionTypes[rand.Intn(len(transactionTypes))]
 
+	// Get actual portfolio ID from database
+	var portfolios []models.Portfolio
+	if err := database.GetDB().Find(&portfolios).Error; err != nil || len(portfolios) == 0 {
+		// Fallback to a default portfolio ID if database query fails
+		log.Printf("Warning: failed to fetch portfolios for transaction: %v", err)
+		return models.Transaction{} // Return empty transaction
+	}
+
+	selectedPortfolio := portfolios[rand.Intn(len(portfolios))]
+
 	return models.Transaction{
 		ID:              uuid.New(),
-		PortfolioID:     uuid.New(), // Mock portfolio ID
+		PortfolioID:     selectedPortfolio.ID,
 		TransactionType: transactionType,
 		Symbol:          symbol,
 		Quantity:        quantity,
@@ -230,13 +245,19 @@ func (m *MockDataGenerator) generateRiskMetrics() {
 			portfolio := portfolios[rand.Intn(len(portfolios))]
 
 			// Calculate actual VaR using RiskService
-			varMetric, err := m.riskService.CalculatePortfolioVAR(portfolio.ID)
+			varReq := services.VaRCalculationRequest{
+				PortfolioID:     portfolio.ID,
+				TimeHorizon:     1,
+				ConfidenceLevel: 95.0,
+				Method:          "historical_simulation",
+			}
+			varMetric, err := m.riskService.CalculateVaR(varReq)
 			if err != nil {
 				log.Printf("Warning: failed to calculate VaR for portfolio %s: %v", portfolio.ID, err)
 			}
 
 			// Calculate actual Liquidity using RiskService
-			liquidityMetric, err := m.riskService.CalculatePortfolioLiquidity(portfolio.ID)
+			liquidityMetric, err := m.riskService.CalculateLiquidityRisk(portfolio.ID)
 			if err != nil {
 				log.Printf("Warning: failed to calculate liquidity for portfolio %s: %v", portfolio.ID, err)
 			}
@@ -252,7 +273,7 @@ func (m *MockDataGenerator) generateRiskMetrics() {
 				err := m.alertService.CreateRiskBreachAlert(
 					portfolio.ID,
 					"VAR",
-					varMetric.Value.InexactFloat64(),
+					varMetric.VaRValue.InexactFloat64(),
 					varMetric.Threshold.InexactFloat64(),
 				)
 				if err != nil {
@@ -260,12 +281,12 @@ func (m *MockDataGenerator) generateRiskMetrics() {
 				}
 			}
 
-			if liquidityMetric != nil && liquidityMetric.Status != "SAFE" {
+			if liquidityMetric != nil && liquidityMetric.RiskAssessment != "LOW_RISK" {
 				err := m.alertService.CreateRiskBreachAlert(
 					portfolio.ID,
 					"LIQUIDITY_RATIO",
-					liquidityMetric.Value.InexactFloat64(),
-					liquidityMetric.Threshold.InexactFloat64(),
+					liquidityMetric.LiquidityRatio.InexactFloat64(),
+					decimal.NewFromFloat(0.3).InexactFloat64(), // Default threshold
 				)
 				if err != nil {
 					log.Printf("Warning: failed to create liquidity alert: %v", err)
@@ -275,20 +296,20 @@ func (m *MockDataGenerator) generateRiskMetrics() {
 			// Broadcast risk metrics
 			var varStr, varStatus, liquidityStr, liquidityStatus string
 			if varMetric != nil {
-				varStr = varMetric.Value.String()
+				varStr = varMetric.VaRValue.String()
 				varStatus = varMetric.Status
 			} else {
 				varStr = "N/A"
 				varStatus = "N/A"
 			}
 			if liquidityMetric != nil {
-				liquidityStr = liquidityMetric.Value.String()
-				liquidityStatus = liquidityMetric.Status
+				liquidityStr = liquidityMetric.LiquidityRatio.String()
+				liquidityStatus = liquidityMetric.RiskAssessment
 			} else {
 				liquidityStr = "N/A"
 				liquidityStatus = "N/A"
 			}
-			
+
 			log.Printf("Generated risk metrics for portfolio %s - VaR: %s (%s), Liquidity: %s (%s)",
 				portfolio.ID, varStr, varStatus, liquidityStr, liquidityStatus)
 

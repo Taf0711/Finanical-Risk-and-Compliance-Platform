@@ -32,6 +32,17 @@ type Transaction struct {
 
 	// Relations
 	Portfolio Portfolio `gorm:"foreignKey:PortfolioID" json:"portfolio,omitempty"`
+
+	// Risk Management Fields (add these)
+	Side       string          `json:"side"`       // BUY or SELL
+	AssetType  string          `json:"asset_type"` // STOCK, BOND, COMMODITY, CRYPTO
+	StopLoss   decimal.Decimal `gorm:"type:decimal(20,8)" json:"stop_loss"`
+	TakeProfit decimal.Decimal `gorm:"type:decimal(20,8)" json:"take_profit"`
+
+	// Risk Analysis Results
+	RiskApproved   bool `gorm:"default:false" json:"risk_approved"`
+	RequiresReview bool `gorm:"default:false" json:"requires_review"`
+	RiskViolations JSON `gorm:"type:jsonb" json:"risk_violations"`
 }
 
 func (t *Transaction) BeforeCreate(tx *gorm.DB) error {
