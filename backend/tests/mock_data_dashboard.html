@@ -447,30 +447,111 @@
             lastData.risks = risk;
             const container = document.getElementById('riskMetrics');
             
+            console.log('Received risk data:', risk); // Debug log
+            
             let html = '';
-            if (risk.var) {
+            
+            // Handle VaR data with proper null checks and field access
+            if (risk.var && risk.var !== null) {
+                let varValue = 0;
+                let varStatus = 'UNKNOWN';
+                
+                // Try different ways to extract VaR value
+                if (risk.var.VaRValue) {
+                    if (typeof risk.var.VaRValue === 'string') {
+                        varValue = parseFloat(risk.var.VaRValue) || 0;
+                    } else if (typeof risk.var.VaRValue === 'number') {
+                        varValue = risk.var.VaRValue;
+                    }
+                } else if (risk.var.var_value) {
+                    varValue = parseFloat(risk.var.var_value) || 0;
+                } else if (typeof risk.var === 'number') {
+                    varValue = risk.var;
+                }
+                
+                if (risk.var.Status) {
+                    varStatus = risk.var.Status;
+                } else if (risk.var.status) {
+                    varStatus = risk.var.status;
+                }
+                
                 html += `
                     <div class="risk-metric">
                         <span class="metric-label">Value at Risk (VaR)</span>
-                        <span class="metric-value">$${parseFloat(risk.var.Value).toLocaleString()}</span>
+                        <span class="metric-value">$${varValue.toLocaleString()}</span>
+                    </div>
+                    <div class="risk-metric">
+                        <span class="metric-label">VaR Status</span>
+                        <span class="metric-value" style="color: ${getStatusColor(varStatus)}">${varStatus}</span>
                     </div>
                 `;
             }
-            if (risk.liquidity) {
-                const liquidityPercent = (parseFloat(risk.liquidity.Value) * 100).toFixed(2);
+            
+            // Handle Liquidity data with proper null checks and field access
+            if (risk.liquidity && risk.liquidity !== null) {
+                let liquidityValue = 0;
+                let liquidityStatus = 'UNKNOWN';
+                
+                // Try different ways to extract liquidity value
+                if (risk.liquidity.LiquidityRatio) {
+                    if (typeof risk.liquidity.LiquidityRatio === 'string') {
+                        liquidityValue = parseFloat(risk.liquidity.LiquidityRatio) || 0;
+                    } else if (typeof risk.liquidity.LiquidityRatio === 'number') {
+                        liquidityValue = risk.liquidity.LiquidityRatio;
+                    }
+                } else if (risk.liquidity.liquidity_ratio) {
+                    liquidityValue = parseFloat(risk.liquidity.liquidity_ratio) || 0;
+                } else if (typeof risk.liquidity === 'number') {
+                    liquidityValue = risk.liquidity;
+                }
+                
+                if (risk.liquidity.RiskAssessment) {
+                    liquidityStatus = risk.liquidity.RiskAssessment;
+                } else if (risk.liquidity.risk_assessment) {
+                    liquidityStatus = risk.liquidity.risk_assessment;
+                }
+                
+                const liquidityPercent = (liquidityValue * 100).toFixed(2);
                 html += `
                     <div class="risk-metric">
                         <span class="metric-label">Liquidity Ratio</span>
                         <span class="metric-value">${liquidityPercent}%</span>
                     </div>
+                    <div class="risk-metric">
+                        <span class="metric-label">Liquidity Risk</span>
+                        <span class="metric-value" style="color: ${getStatusColor(liquidityStatus)}">${liquidityStatus}</span>
+                    </div>
                 `;
             }
             
-            container.innerHTML = html || '<div style="text-align: center; opacity: 0.5;">No risk data</div>';
+            // Show debug info if no valid data
+            if (!html) {
+                console.log('No valid risk data found. Full structure:', risk);
+                html = '<div style="text-align: center; opacity: 0.5;">Waiting for risk data...</div>';
+            }
+            
+            container.innerHTML = html;
+        }
+        
+        function getStatusColor(status) {
+            if (!status) return '#666';
+            switch(status.toUpperCase()) {
+                case 'SAFE': case 'LOW_RISK': return '#4CAF50';
+                case 'WARNING': case 'MEDIUM_RISK': return '#FF9800';
+                case 'CRITICAL': case 'HIGH_RISK': return '#f44336';
+                default: return '#666';
+            }
         }
 
         function handleAlert(alertData) {
+            console.log('Received alert data:', alertData); // Debug log
+            
             const alert = alertData.alert;
+            if (!alert) {
+                console.log('No alert object found in data');
+                return;
+            }
+            
             lastData.alerts.unshift(alert);
             if (lastData.alerts.length > 5) lastData.alerts.pop();
             
@@ -478,27 +559,40 @@
             let html = '';
             
             for (const a of lastData.alerts) {
+                // Handle different possible field names
+                let title = a.Title || a.title || 'Unknown Alert';
+                let severity = a.Severity || a.severity || 'MEDIUM';
+                let description = a.Description || a.description || 'No description available';
+                let source = a.Source || a.source || 'UNKNOWN';
+                
                 html += `
                     <div class="alert-item">
                         <div class="alert-title">
-                            ${a.Title}
-                            <span class="alert-severity severity-${a.Severity}">${a.Severity}</span>
+                            ${title}
+                            <span class="alert-severity severity-${severity}">${severity}</span>
                         </div>
                         <div style="font-size: 0.9em; opacity: 0.8; margin-top: 5px;">
-                            ${a.Description}
+                            ${description}
                         </div>
                         <div style="font-size: 0.8em; opacity: 0.6; margin-top: 5px;">
-                            Source: ${a.Source} | ${new Date().toLocaleTimeString()}
+                            Source: ${source} | ${new Date().toLocaleTimeString()}
                         </div>
                     </div>
                 `;
             }
             
-            container.innerHTML = html;
+            container.innerHTML = html || '<div style="text-align: center; opacity: 0.5;">No alerts yet...</div>';
         }
 
         function handleTransaction(txData) {
+            console.log('Received transaction data:', txData); // Debug log
+            
             const tx = txData.transaction;
+            if (!tx) {
+                console.log('No transaction object found in data');
+                return;
+            }
+            
             lastData.transactions.unshift(tx);
             if (lastData.transactions.length > 5) lastData.transactions.pop();
             
@@ -506,14 +600,43 @@
             let html = '';
             
             for (const t of lastData.transactions) {
-                const amount = parseFloat(t.Amount);
+                // Handle different possible field names and types
+                let transactionType = t.TransactionType || t.transaction_type || 'UNKNOWN';
+                let symbol = t.Symbol || t.symbol || 'UNKNOWN';
+                let quantity = 0;
+                let price = 0;
+                let amount = 0;
+                
+                // Parse quantity
+                if (t.Quantity) {
+                    quantity = typeof t.Quantity === 'string' ? parseFloat(t.Quantity) : t.Quantity;
+                } else if (t.quantity) {
+                    quantity = typeof t.quantity === 'string' ? parseFloat(t.quantity) : t.quantity;
+                }
+                
+                // Parse price
+                if (t.Price) {
+                    price = typeof t.Price === 'string' ? parseFloat(t.Price) : t.Price;
+                } else if (t.price) {
+                    price = typeof t.price === 'string' ? parseFloat(t.price) : t.price;
+                }
+                
+                // Parse amount
+                if (t.Amount) {
+                    amount = typeof t.Amount === 'string' ? parseFloat(t.Amount) : t.Amount;
+                } else if (t.amount) {
+                    amount = typeof t.amount === 'string' ? parseFloat(t.amount) : t.amount;
+                } else {
+                    amount = quantity * price;
+                }
+                
                 html += `
                     <div style="background: rgba(0,0,0,0.2); padding: 10px; margin-bottom: 10px; border-radius: 5px; border-left: 3px solid #9C27B0;">
                         <div style="font-weight: bold;">
-                            ${t.TransactionType} ${t.Symbol}
+                            ${transactionType} ${symbol}
                         </div>
                         <div style="font-size: 0.9em; margin-top: 5px;">
-                            Quantity: ${parseFloat(t.Quantity).toFixed(2)} @ $${parseFloat(t.Price).toFixed(2)}
+                            Quantity: ${quantity.toFixed(2)} @ $${price.toFixed(2)}
                         </div>
                         <div style="font-size: 0.9em; opacity: 0.8;">
                             Total: $${amount.toLocaleString()}

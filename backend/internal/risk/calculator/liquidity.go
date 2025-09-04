@@ -50,6 +50,20 @@ func (l *LiquidityCalculator) CalculateLiquidity(positions []models.Position, po
 		Positions:      make([]PositionLiquidity, 0, len(positions)),
 	}
 
+	// Handle empty portfolio case
+	if len(positions) == 0 || portfolioValue <= 0 {
+		result.LiquidityRatio = 1.0 // Empty portfolio is considered fully liquid
+		result.IlliquidityRatio = 0.0
+		result.WeightedLiquidityScore = 1.0
+		result.NormalMarketDays = 0.0
+		result.StressedMarketDays = 0.0
+		result.CrisisMarketDays = 0.0
+		result.LiquidityAdjustedVaR = 0.0
+		result.LiquidityHealth = "HEALTHY"
+		result.Alerts = []LiquidityAlert{}
+		return result, nil
+	}
+
 	totalLiquidValue := 0.0
 	totalIlliquidValue := 0.0
 	weightedLiquidityScore := 0.0

@@ -56,12 +56,14 @@ func main() {
 
 	// Initialize services
 	authService := services.NewAuthService(&cfg.JWT)
+	portfolioService := services.NewPortfolioService()
 	authHandler := handlers.NewAuthHandler(authService)
 	portfolioHandler := handlers.NewPortfolioHandler()
 	transactionHandler := handlers.NewTransactionHandler()
 	riskHandler := handlers.NewRiskHandler(&cfg.Risk)
 	alertHandler := handlers.NewAlertHandler()
 	complianceHandler := handlers.NewComplianceHandler()
+	monteCarloHandler := handlers.NewMonteCarloHandler(portfolioService)
 
 	// Initialize WebSocket hub
 	hub := wsHandler.NewHub()
@@ -124,6 +126,14 @@ func main() {
 	risk.Get("/portfolio/:id/var", riskHandler.CalculateVAR)
 	risk.Get("/portfolio/:id/liquidity", riskHandler.CalculateLiquidityRisk)
 	risk.Get("/portfolio/:id/history", riskHandler.GetRiskHistory)
+
+	// Monte Carlo simulation routes
+	monteCarlo := protected.Group("/monte-carlo")
+	monteCarlo.Post("/portfolio/:portfolio_id/simulation", monteCarloHandler.RunSimulation)
+	monteCarlo.Get("/portfolio/:portfolio_id/validation", monteCarloHandler.RunQuickValidation)
+	monteCarlo.Get("/simulation/:simulation_id/status", monteCarloHandler.GetSimulationStatus)
+	monteCarlo.Get("/portfolio/:portfolio_id/history", monteCarloHandler.GetSimulationHistory)
+	monteCarlo.Post("/portfolio/:portfolio_id/compare", monteCarloHandler.CompareSimulations)
 
 	// Alert routes
 	alerts := protected.Group("/alerts")
@@ -197,6 +207,15 @@ func main() {
 
 	// Start mock data generator in development
 	if cfg.App.Env == "development" {
+		// Seed test data first
+		go func() {
+			time.Sleep(2 * time.Second) // Wait for database to be ready
+			if err := mock.SeedTestData(); err != nil {
+				log.Printf("Warning: Failed to seed test data: %v", err)
+			}
+		}()
+
+		// Start mock data generator
 		go startMockDataGenerator(hub, simpleHub)
 	}
 

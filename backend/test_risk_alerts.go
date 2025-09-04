@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
 	"github.com/Taf0711/financial-risk-monitor/internal/config"
@@ -34,9 +33,25 @@ func main() {
 	riskService := services.NewRiskEngineService()
 	alertService := services.NewAlertService()
 
+	// Create a test user first
+	user := &models.User{
+		Email:     "test@example.com",
+		Password:  "hashed_password",
+		FirstName: "Test",
+		LastName:  "User",
+		Role:      "analyst",
+		IsActive:  true,
+	}
+
+	if err := database.GetDB().Create(user).Error; err != nil {
+		log.Fatal("Failed to create test user:", err)
+	}
+
+	fmt.Printf("Created test user: %s %s (ID: %s)\n", user.FirstName, user.LastName, user.ID)
+
 	// Create a test portfolio
 	portfolio := &models.Portfolio{
-		UserID:      uuid.New(),
+		UserID:      user.ID,
 		Name:        "Test Portfolio",
 		Description: "Test portfolio for risk calculations",
 		Currency:    "USD",

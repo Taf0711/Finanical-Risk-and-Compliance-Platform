@@ -254,17 +254,39 @@ func (m *MockDataGenerator) generateRiskMetrics() {
 			varMetric, err := m.riskService.CalculateVaR(varReq)
 			if err != nil {
 				log.Printf("Warning: failed to calculate VaR for portfolio %s: %v", portfolio.ID, err)
+				// Create fallback VaR metric
+				varMetric = &services.VaRResult{
+					PortfolioID:     portfolio.ID,
+					VaRValue:        portfolio.TotalValue.Mul(decimal.NewFromFloat(0.05)),
+					VaRPercentage:   decimal.NewFromFloat(5.0),
+					ConfidenceLevel: decimal.NewFromFloat(95.0),
+					TimeHorizon:     1,
+					Method:          "fallback",
+					PortfolioValue:  portfolio.TotalValue,
+					CalculatedAt:    time.Now(),
+					Status:          "SAFE",
+					Threshold:       portfolio.TotalValue.Mul(decimal.NewFromFloat(0.08)),
+				}
 			}
 
 			// Calculate actual Liquidity using RiskService
 			liquidityMetric, err := m.riskService.CalculateLiquidityRisk(portfolio.ID)
 			if err != nil {
 				log.Printf("Warning: failed to calculate liquidity for portfolio %s: %v", portfolio.ID, err)
+				// Create fallback liquidity metric
+				liquidityMetric = &services.LiquidityResult{
+					PortfolioID:     portfolio.ID,
+					LiquidityRatio:  decimal.NewFromFloat(0.75),
+					LiquidityScore:  "MEDIUM",
+					DaysToLiquidate: decimal.NewFromFloat(2.0),
+					RiskAssessment:  "LOW_RISK",
+					CalculatedAt:    time.Now(),
+				}
 			}
 
-			// Skip this iteration if both metrics are nil (empty portfolio)
-			if varMetric == nil && liquidityMetric == nil {
-				log.Printf("Skipping risk metric generation for empty portfolio %s", portfolio.ID)
+			// Ensure we have valid metrics (should not be nil now)
+			if varMetric == nil || liquidityMetric == nil {
+				log.Printf("Skipping risk metric generation for portfolio %s - null metrics", portfolio.ID)
 				continue
 			}
 
