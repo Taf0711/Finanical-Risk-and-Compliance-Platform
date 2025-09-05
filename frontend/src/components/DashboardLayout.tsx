@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, ReactNode } from 'react';
+import { useState, ReactNode, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   HomeIcon,
   ChartBarIcon,
@@ -13,7 +13,9 @@ import {
   ArrowRightOnRectangleIcon,
   Bars3Icon,
   XMarkIcon,
-  UserCircleIcon
+  UserCircleIcon,
+  ChevronDownIcon,
+  TradingViewIcon
 } from '@heroicons/react/24/outline';
 import { useAuth } from '@/hooks/useAuth';
 import clsx from 'clsx';
@@ -24,16 +26,32 @@ interface DashboardLayoutProps {
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
+  { name: 'Trading', href: '/trading', icon: ArrowsRightLeftIcon },
   { name: 'Risk Analytics', href: '/risk', icon: ChartBarIcon },
   { name: 'Transactions', href: '/trades', icon: ArrowsRightLeftIcon },
   { name: 'Alerts', href: '/alerts', icon: BellIcon },
-  { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
 ];
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-900">
@@ -99,15 +117,22 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
           {/* User Menu */}
           <div className="border-t border-slate-700 p-4">
-            <div className="flex items-center mb-4">
-              <UserCircleIcon className="w-8 h-8 text-slate-400" />
+            <Link
+              href="/profile"
+              className="flex items-center p-3 mb-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+            >
+              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm font-medium">
+                  {user?.first_name?.charAt(0)}{user?.last_name?.charAt(0)}
+                </span>
+              </div>
               <div className="ml-3">
-                <p className="text-sm font-medium text-white">
+                <p className="text-sm font-medium">
                   {user?.first_name} {user?.last_name}
                 </p>
                 <p className="text-xs text-slate-400">{user?.email}</p>
               </div>
-            </div>
+            </Link>
             <button
               onClick={logout}
               className="flex items-center w-full px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
@@ -138,11 +163,60 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full"></span>
               </button>
 
-              {/* User avatar */}
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm font-medium">
-                  {user?.first_name?.charAt(0)}{user?.last_name?.charAt(0)}
-                </span>
+              {/* User Menu Dropdown */}
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                  className="flex items-center space-x-2 text-slate-400 hover:text-white transition-colors"
+                >
+                  <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+                    <span className="text-white text-sm font-medium">
+                      {user?.first_name?.charAt(0)}{user?.last_name?.charAt(0)}
+                    </span>
+                  </div>
+                  <ChevronDownIcon className="w-4 h-4" />
+                </button>
+
+                <AnimatePresence>
+                  {userMenuOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg z-50"
+                    >
+                      <div className="p-2">
+                        <Link
+                          href="/profile"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex items-center px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                        >
+                          <UserCircleIcon className="w-4 h-4 mr-2" />
+                          Profile Settings
+                        </Link>
+                        <Link
+                          href="/settings"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex items-center px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                        >
+                          <Cog6ToothIcon className="w-4 h-4 mr-2" />
+                          Application Settings
+                        </Link>
+                        <hr className="my-2 border-slate-700" />
+                        <button
+                          onClick={() => {
+                            setUserMenuOpen(false);
+                            logout();
+                          }}
+                          className="flex items-center w-full px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                        >
+                          <ArrowRightOnRectangleIcon className="w-4 h-4 mr-2" />
+                          Sign Out
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
           </div>

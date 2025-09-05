@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/Taf0711/financial-risk-monitor/internal/marketdata/providers"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/calculator"
 	"github.com/Taf0711/financial-risk-monitor/internal/services"
 )
@@ -21,12 +22,12 @@ type RiskEngine struct {
 
 // NewRiskEngine creates a new risk engine instance
 func NewRiskEngine(portfolioValue float64) *RiskEngine {
-	// Mock market data provider for now
-	mockMarketData := &MockMarketDataProvider{}
+	// Real market data provider using Alpaca
+	alpacaProvider := providers.NewAlpacaProvider("", "")
 
 	return &RiskEngine{
 		varCalculator:       calculator.NewVaRCalculator(portfolioValue),
-		liquidityCalculator: calculator.NewLiquidityCalculator(mockMarketData),
+		liquidityCalculator: calculator.NewLiquidityCalculator(alpacaProvider),
 		riskService:         services.NewRiskEngineService(),
 	}
 }
@@ -121,49 +122,6 @@ type RiskUpdate struct {
 	Report      *PortfolioRiskReport `json:"report,omitempty"`
 	Error       error                `json:"error,omitempty"`
 	Timestamp   time.Time            `json:"timestamp"`
-}
-
-// MockMarketDataProvider provides mock market data
-type MockMarketDataProvider struct{}
-
-func (m *MockMarketDataProvider) GetAverageDailyVolume(symbol string) float64 {
-	volumes := map[string]float64{
-		"AAPL": 50000000, "GOOGL": 25000000, "MSFT": 40000000,
-		"BTC": 2000000, "ETH": 5000000, "GOLD": 100000,
-	}
-	if vol, exists := volumes[symbol]; exists {
-		return vol
-	}
-	return 1000000
-}
-
-func (m *MockMarketDataProvider) GetBidAskSpread(symbol string) float64 {
-	spreads := map[string]float64{
-		"AAPL": 0.0001, "GOOGL": 0.0001, "MSFT": 0.0001,
-		"BTC": 0.001, "ETH": 0.001, "GOLD": 0.002,
-	}
-	if spread, exists := spreads[symbol]; exists {
-		return spread
-	}
-	return 0.001
-}
-
-func (m *MockMarketDataProvider) GetMarketCap(symbol string) float64 {
-	marketCaps := map[string]float64{
-		"AAPL": 3000000000000, "GOOGL": 1500000000000, "MSFT": 2800000000000,
-		"BTC": 800000000000, "ETH": 400000000000, "GOLD": 12000000000000,
-	}
-	if cap, exists := marketCaps[symbol]; exists {
-		return cap
-	}
-	return 1000000000
-}
-
-func (m *MockMarketDataProvider) GetMarketDepth(symbol string) *calculator.MarketDepth {
-	return &calculator.MarketDepth{
-		BidLevels: []calculator.PriceLevel{{Price: 100.0, Quantity: 1000, Orders: 10}},
-		AskLevels: []calculator.PriceLevel{{Price: 100.1, Quantity: 1000, Orders: 10}},
-	}
 }
 
 // calculateOverallRiskScore computes a composite risk score

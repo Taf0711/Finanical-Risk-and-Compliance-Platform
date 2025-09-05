@@ -52,6 +52,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       JWT_SECRET: your-super-secret-jwt-key-change-this
+      # Alpaca API Configuration (Paper Trading)
+      ALPACA_API_KEY: PKJC7VEKQW5IA1JV603K
+      ALPACA_SECRET_KEY: w3zxcKy85affRTgPnkTR4mIeWpOTaPQHdPqKWuyN
+      ALPACA_BASE_URL: https://paper-api.alpaca.markets/v2
     ports:
       - "8080:8080"
     depends_on:

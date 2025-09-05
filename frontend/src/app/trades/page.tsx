@@ -41,7 +41,7 @@ export default function TradesPage() {
         transactionApi.getAll(filters),
         portfolioApi.getAll()
       ]);
-      setTransactions(transactionsData.data || []);
+      setTransactions(transactionsData || []);
       setPortfolios(portfoliosData);
     } catch (error) {
       console.error('Failed to load data:', error);

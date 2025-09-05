@@ -153,7 +153,11 @@ export interface PriceUpdate {
   [symbol: string]: {
     price: number;
     change: number;
+    change_percent: number;
+    volume: number;
     timestamp: number;
+    provider: string;
+    is_market_open: boolean;
   };
 }
 

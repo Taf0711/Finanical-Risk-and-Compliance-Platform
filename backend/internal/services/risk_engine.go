@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Taf0711/financial-risk-monitor/internal/database"
+	"github.com/Taf0711/financial-risk-monitor/internal/marketdata/providers"
 	"github.com/Taf0711/financial-risk-monitor/internal/models"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/calculator"
 )
@@ -116,13 +117,14 @@ func (m *MockMarketDataProvider) GetMarketDepth(symbol string) *calculator.Marke
 }
 
 func NewRiskEngineService() *RiskEngineService {
-	// Create a mock market data provider
-	mockMarketData := &MockMarketDataProvider{}
+	// Create a real market data provider using Alpaca
+	// Note: In production, this should get API keys from config
+	alpacaProvider := providers.NewAlpacaProvider("", "") // Will use fallback data if no keys
 
 	return &RiskEngineService{
 		db:            database.GetDB(),
 		varCalculator: calculator.NewVaRCalculator(1000000.0), // Mock portfolio value
-		liquidityCalc: calculator.NewLiquidityCalculator(mockMarketData),
+		liquidityCalc: calculator.NewLiquidityCalculator(alpacaProvider),
 		alertService:  NewAlertService(),
 	}
 }

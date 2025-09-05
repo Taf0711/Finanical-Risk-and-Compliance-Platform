@@ -4,6 +4,7 @@ package handlers
 import (
 	"strconv"
 
+	"github.com/Taf0711/financial-risk-monitor/internal/marketdata/providers"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/calculator"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/simulation"
 	"github.com/Taf0711/financial-risk-monitor/internal/services"
@@ -85,8 +86,9 @@ func (h *MonteCarloHandler) RunSimulation(c *fiber.Ctx) error {
 	portfolioValue := portfolio.TotalValue.InexactFloat64()
 	varCalculator := calculator.NewVaRCalculator(portfolioValue)
 
-	// Mock market data provider for now - in production, use real market data
-	liquidityCalculator := calculator.NewLiquidityCalculator(&MockMarketDataProvider{})
+	// Real market data provider using Alpaca
+	alpacaProvider := providers.NewAlpacaProvider("", "")
+	liquidityCalculator := calculator.NewLiquidityCalculator(alpacaProvider)
 
 	// Create Monte Carlo simulator
 	simulator := simulation.NewMonteCarloSimulator(varCalculator, liquidityCalculator)
@@ -159,7 +161,8 @@ func (h *MonteCarloHandler) RunQuickValidation(c *fiber.Ctx) error {
 	// Initialize calculators
 	portfolioValue := portfolio.TotalValue.InexactFloat64()
 	varCalculator := calculator.NewVaRCalculator(portfolioValue)
-	liquidityCalculator := calculator.NewLiquidityCalculator(&MockMarketDataProvider{})
+	alpacaProvider := providers.NewAlpacaProvider("", "")
+	liquidityCalculator := calculator.NewLiquidityCalculator(alpacaProvider)
 
 	// Create simulator and run
 	simulator := simulation.NewMonteCarloSimulator(varCalculator, liquidityCalculator)
@@ -291,7 +294,8 @@ func (h *MonteCarloHandler) CompareSimulations(c *fiber.Ctx) error {
 	// Initialize calculators
 	portfolioValue := portfolio.TotalValue.InexactFloat64()
 	varCalculator := calculator.NewVaRCalculator(portfolioValue)
-	liquidityCalculator := calculator.NewLiquidityCalculator(&MockMarketDataProvider{})
+	alpacaProvider := providers.NewAlpacaProvider("", "")
+	liquidityCalculator := calculator.NewLiquidityCalculator(alpacaProvider)
 	simulator := simulation.NewMonteCarloSimulator(varCalculator, liquidityCalculator)
 
 	// Run simulations for each scenario
@@ -341,47 +345,4 @@ func (h *MonteCarloHandler) CompareSimulations(c *fiber.Ctx) error {
 			"portfolio_value":    portfolioValue,
 		},
 	})
-}
-
-// MockMarketDataProvider provides mock market data for the handler
-type MockMarketDataProvider struct{}
-
-func (m *MockMarketDataProvider) GetAverageDailyVolume(symbol string) float64 {
-	volumes := map[string]float64{
-		"AAPL": 50000000, "GOOGL": 25000000, "MSFT": 40000000,
-		"BTC": 2000000, "ETH": 5000000, "GOLD": 100000,
-	}
-	if vol, exists := volumes[symbol]; exists {
-		return vol
-	}
-	return 1000000
-}
-
-func (m *MockMarketDataProvider) GetBidAskSpread(symbol string) float64 {
-	spreads := map[string]float64{
-		"AAPL": 0.0001, "GOOGL": 0.0001, "MSFT": 0.0001,
-		"BTC": 0.001, "ETH": 0.001, "GOLD": 0.002,
-	}
-	if spread, exists := spreads[symbol]; exists {
-		return spread
-	}
-	return 0.001
-}
-
-func (m *MockMarketDataProvider) GetMarketDepth(symbol string) *calculator.MarketDepth {
-	return &calculator.MarketDepth{
-		BidLevels: []calculator.PriceLevel{{Price: 100.0, Quantity: 1000, Orders: 10}},
-		AskLevels: []calculator.PriceLevel{{Price: 100.1, Quantity: 1000, Orders: 10}},
-	}
-}
-
-func (m *MockMarketDataProvider) GetMarketCap(symbol string) float64 {
-	marketCaps := map[string]float64{
-		"AAPL": 3000000000000, "GOOGL": 1500000000000, "MSFT": 2800000000000,
-		"BTC": 800000000000, "ETH": 400000000000, "GOLD": 12000000000000,
-	}
-	if cap, exists := marketCaps[symbol]; exists {
-		return cap
-	}
-	return 1000000000
 }
