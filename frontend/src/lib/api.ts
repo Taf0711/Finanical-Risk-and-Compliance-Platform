@@ -73,7 +73,7 @@ export const authApi = {
   },
 
   getCurrentUser: async (): Promise<any> => {
-    const response = await api.get('/auth/me');
+    const response = await api.get('/protected/auth/me');
     return response.data;
   }
 };

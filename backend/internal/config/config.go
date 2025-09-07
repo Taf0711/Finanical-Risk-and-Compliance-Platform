@@ -4,19 +4,21 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	App      AppConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	JWT      JWTConfig
-	WS       WebSocketConfig
-	Risk     RiskConfig
-	Alert    AlertConfig
+	App        AppConfig
+	Database   DatabaseConfig
+	Redis      RedisConfig
+	JWT        JWTConfig
+	WS         WebSocketConfig
+	Risk       RiskConfig
+	Alert      AlertConfig
+	MarketData MarketDataConfig
 }
 
 type AppConfig struct {
@@ -63,6 +65,17 @@ type AlertConfig struct {
 	BatchSize   int
 }
 
+type MarketDataConfig struct {
+	PrimaryProvider   string
+	FallbackProviders []string
+	AlpacaAPIKey      string
+	AlpacaAPISecret   string
+	AlphaVantageKey   string
+	CacheTTLMinutes   int
+	RateLimitRPM      int
+	EnableFallback    bool
+}
+
 func Load() (*Config, error) {
 	err := godotenv.Load()
 	if err != nil {
@@ -107,6 +120,16 @@ func Load() (*Config, error) {
 			CleanupDays: getEnvAsInt("ALERT_CLEANUP_DAYS", 30),
 			BatchSize:   getEnvAsInt("ALERT_BATCH_SIZE", 100),
 		},
+		MarketData: MarketDataConfig{
+			PrimaryProvider:   getEnv("MARKET_DATA_PRIMARY_PROVIDER", "alpaca"),
+			FallbackProviders: getEnvAsStringSlice("MARKET_DATA_FALLBACK_PROVIDERS", []string{}),
+			AlpacaAPIKey:      getEnv("ALPACA_API_KEY", ""),
+			AlpacaAPISecret:   getEnv("ALPACA_API_SECRET", ""),
+			AlphaVantageKey:   getEnv("ALPHA_VANTAGE_KEY", ""),
+			CacheTTLMinutes:   getEnvAsInt("MARKET_DATA_CACHE_TTL_MINUTES", 5),
+			RateLimitRPM:      getEnvAsInt("MARKET_DATA_RATE_LIMIT_RPM", 200),
+			EnableFallback:    getEnvAsBool("MARKET_DATA_ENABLE_FALLBACK", true),
+		},
 	}, nil
 }
 
@@ -140,4 +163,27 @@ func getEnvAsDuration(key string, defaultValue string) time.Duration {
 	}
 	duration, _ := time.ParseDuration(defaultValue)
 	return duration
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	valueStr := getEnv(key, "")
+	if value, err := strconv.ParseBool(valueStr); err == nil {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvAsStringSlice(key string, defaultValue []string) []string {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return defaultValue
+	}
+	// Simple comma-separated parsing
+	result := []string{}
+	for _, item := range strings.Split(valueStr, ",") {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

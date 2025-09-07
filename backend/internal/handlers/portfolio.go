@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"strconv"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
@@ -174,5 +176,125 @@ func (h *PortfolioHandler) DeletePosition(c *fiber.Ctx) error {
 	// TODO: Implement position deletion
 	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
 		"error": "Position deletion not yet implemented",
+	})
+}
+
+// AddFunds adds funds to a portfolio
+func (h *PortfolioHandler) AddFunds(c *fiber.Ctx) error {
+	portfolioID := c.Params("id")
+	userID := c.Locals("user_id").(string)
+
+	var req services.FundTransactionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// Ensure it's a deposit request
+	req.Type = "deposit"
+
+	response, err := h.portfolioService.AddFunds(
+		uuid.MustParse(portfolioID),
+		uuid.MustParse(userID),
+		req,
+	)
+
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Funds added successfully",
+		"data":    response,
+	})
+}
+
+// WithdrawFunds withdraws funds from a portfolio
+func (h *PortfolioHandler) WithdrawFunds(c *fiber.Ctx) error {
+	portfolioID := c.Params("id")
+	userID := c.Locals("user_id").(string)
+
+	var req services.FundTransactionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// Ensure it's a withdrawal request
+	req.Type = "withdrawal"
+
+	response, err := h.portfolioService.WithdrawFunds(
+		uuid.MustParse(portfolioID),
+		uuid.MustParse(userID),
+		req,
+	)
+
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Funds withdrawn successfully",
+		"data":    response,
+	})
+}
+
+// GetCashBalance returns the available cash balance
+func (h *PortfolioHandler) GetCashBalance(c *fiber.Ctx) error {
+	portfolioID := c.Params("id")
+	userID := c.Locals("user_id").(string)
+
+	balance, err := h.portfolioService.GetCashBalance(
+		uuid.MustParse(portfolioID),
+		uuid.MustParse(userID),
+	)
+
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"portfolio_id": portfolioID,
+		"cash_balance": balance,
+		"currency":     "USD", // Default currency
+	})
+}
+
+// GetTransactionHistory returns transaction history for a portfolio
+func (h *PortfolioHandler) GetTransactionHistory(c *fiber.Ctx) error {
+	portfolioID := c.Params("id")
+	userID := c.Locals("user_id").(string)
+
+	// Parse query parameters
+	limitParam := c.Query("limit", "50")
+	limit := 50
+	if l, err := strconv.Atoi(limitParam); err == nil && l > 0 {
+		limit = l
+	}
+
+	transactions, err := h.portfolioService.GetTransactionHistory(
+		uuid.MustParse(portfolioID),
+		uuid.MustParse(userID),
+		limit,
+	)
+
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"portfolio_id":  portfolioID,
+		"transactions":  transactions,
+		"total_records": len(transactions),
 	})
 }

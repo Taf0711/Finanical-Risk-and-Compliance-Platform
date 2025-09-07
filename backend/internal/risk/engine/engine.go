@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
-	"github.com/Taf0711/financial-risk-monitor/internal/marketdata/providers"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/calculator"
 	"github.com/Taf0711/financial-risk-monitor/internal/services"
 )
@@ -22,12 +21,12 @@ type RiskEngine struct {
 
 // NewRiskEngine creates a new risk engine instance
 func NewRiskEngine(portfolioValue float64) *RiskEngine {
-	// Real market data provider using Alpaca
-	alpacaProvider := providers.NewAlpacaProvider("", "")
+	// Use enhanced market data provider (AlphaVantage-backed) for liquidity calculations
+	enhancedProvider := calculator.NewEnhancedMarketDataProvider("")
 
 	return &RiskEngine{
-		varCalculator:       calculator.NewVaRCalculator(portfolioValue),
-		liquidityCalculator: calculator.NewLiquidityCalculator(alpacaProvider),
+		varCalculator:       calculator.NewVaRCalculator(portfolioValue, 252),
+		liquidityCalculator: calculator.NewLiquidityCalculator(enhancedProvider),
 		riskService:         services.NewRiskEngineService(),
 	}
 }

@@ -2,6 +2,8 @@ package services
 
 import (
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -167,4 +169,265 @@ func (s *PortfolioService) CalculatePortfolioValue(portfolioID uuid.UUID) error 
 		Update("total_value", totalValue).Error
 
 	return err
+}
+
+// FundTransactionRequest represents a fund deposit or withdrawal request
+type FundTransactionRequest struct {
+	Amount      decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	Type        string          `json:"type" validate:"required,oneof=deposit withdrawal"`
+	Description string          `json:"description"`
+	Method      string          `json:"method" validate:"required,oneof=bank_transfer wire credit_card"`
+}
+
+// FundTransactionResponse represents the response for fund operations
+type FundTransactionResponse struct {
+	TransactionID uuid.UUID       `json:"transaction_id"`
+	PortfolioID   uuid.UUID       `json:"portfolio_id"`
+	Amount        decimal.Decimal `json:"amount"`
+	Type          string          `json:"type"`
+	Status        string          `json:"status"`
+	Method        string          `json:"method"`
+	Description   string          `json:"description"`
+	ProcessedAt   time.Time       `json:"processed_at"`
+	NewBalance    decimal.Decimal `json:"new_balance"`
+}
+
+// AddFunds adds funds to a portfolio (simulated for demo purposes)
+func (s *PortfolioService) AddFunds(portfolioID, userID uuid.UUID, req FundTransactionRequest) (*FundTransactionResponse, error) {
+	// Verify portfolio ownership
+	var portfolio models.Portfolio
+	err := s.db.Where("id = ? AND user_id = ?", portfolioID, userID).First(&portfolio).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("portfolio not found")
+		}
+		return nil, err
+	}
+
+	// Validate request
+	if req.Type != "deposit" {
+		return nil, errors.New("invalid transaction type for adding funds")
+	}
+
+	if req.Amount.LessThanOrEqual(decimal.Zero) {
+		return nil, errors.New("amount must be greater than zero")
+	}
+
+	// Create a cash position or update existing one
+	var cashPosition models.Position
+	err = s.db.Where("portfolio_id = ? AND symbol = ?", portfolioID, "CASH").First(&cashPosition).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Create new cash position
+		cashPosition = models.Position{
+			PortfolioID:  portfolioID,
+			Symbol:       "CASH",
+			AssetType:    "CASH",
+			Quantity:     req.Amount,
+			AveragePrice: decimal.NewFromInt(1), // $1 per unit for cash
+			CurrentPrice: decimal.NewFromInt(1),
+			MarketValue:  req.Amount,
+			Liquidity:    "HIGH",
+		}
+		err = s.db.Create(&cashPosition).Error
+	} else if err == nil {
+		// Update existing cash position
+		cashPosition.Quantity = cashPosition.Quantity.Add(req.Amount)
+		cashPosition.MarketValue = cashPosition.MarketValue.Add(req.Amount)
+		err = s.db.Save(&cashPosition).Error
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to update cash position: %w", err)
+	}
+
+	// Create transaction record
+	transaction := models.Transaction{
+		PortfolioID:     portfolioID,
+		TransactionType: "DEPOSIT",
+		Symbol:          "CASH",
+		Quantity:        req.Amount,
+		Price:           decimal.NewFromInt(1),
+		Amount:          req.Amount,
+		Currency:        portfolio.Currency,
+		Status:          "COMPLETED",
+		ExecutedAt:      &[]time.Time{time.Now()}[0],
+		Notes:           req.Description,
+		KYCVerified:     true,
+		AMLChecked:      true,
+		RiskScore:       10, // Low risk for cash deposits
+	}
+
+	err = s.db.Create(&transaction).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transaction record: %w", err)
+	}
+
+	// Update portfolio total value
+	err = s.CalculatePortfolioValue(portfolioID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update portfolio value: %w", err)
+	}
+
+	// Get updated portfolio
+	err = s.db.First(&portfolio, portfolioID).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &FundTransactionResponse{
+		TransactionID: transaction.ID,
+		PortfolioID:   portfolioID,
+		Amount:        req.Amount,
+		Type:          "deposit",
+		Status:        "completed",
+		Method:        req.Method,
+		Description:   req.Description,
+		ProcessedAt:   time.Now(),
+		NewBalance:    portfolio.TotalValue,
+	}, nil
+}
+
+// WithdrawFunds withdraws funds from a portfolio
+func (s *PortfolioService) WithdrawFunds(portfolioID, userID uuid.UUID, req FundTransactionRequest) (*FundTransactionResponse, error) {
+	// Verify portfolio ownership
+	var portfolio models.Portfolio
+	err := s.db.Where("id = ? AND user_id = ?", portfolioID, userID).First(&portfolio).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("portfolio not found")
+		}
+		return nil, err
+	}
+
+	// Validate request
+	if req.Type != "withdrawal" {
+		return nil, errors.New("invalid transaction type for withdrawing funds")
+	}
+
+	if req.Amount.LessThanOrEqual(decimal.Zero) {
+		return nil, errors.New("amount must be greater than zero")
+	}
+
+	// Check if there's enough cash available
+	var cashPosition models.Position
+	err = s.db.Where("portfolio_id = ? AND symbol = ?", portfolioID, "CASH").First(&cashPosition).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("insufficient cash balance")
+		}
+		return nil, err
+	}
+
+	if cashPosition.Quantity.LessThan(req.Amount) {
+		return nil, errors.New("insufficient cash balance for withdrawal")
+	}
+
+	// Update cash position
+	cashPosition.Quantity = cashPosition.Quantity.Sub(req.Amount)
+	cashPosition.MarketValue = cashPosition.MarketValue.Sub(req.Amount)
+
+	// If cash position becomes zero, we can keep it or delete it
+	if cashPosition.Quantity.IsZero() {
+		err = s.db.Delete(&cashPosition).Error
+	} else {
+		err = s.db.Save(&cashPosition).Error
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to update cash position: %w", err)
+	}
+
+	// Create transaction record
+	transaction := models.Transaction{
+		PortfolioID:     portfolioID,
+		TransactionType: "WITHDRAWAL",
+		Symbol:          "CASH",
+		Quantity:        req.Amount,
+		Price:           decimal.NewFromInt(1),
+		Amount:          req.Amount,
+		Currency:        portfolio.Currency,
+		Status:          "COMPLETED",
+		ExecutedAt:      &[]time.Time{time.Now()}[0],
+		Notes:           req.Description,
+		KYCVerified:     true,
+		AMLChecked:      true,
+		RiskScore:       15, // Slightly higher risk for withdrawals
+	}
+
+	err = s.db.Create(&transaction).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transaction record: %w", err)
+	}
+
+	// Update portfolio total value
+	err = s.CalculatePortfolioValue(portfolioID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update portfolio value: %w", err)
+	}
+
+	// Get updated portfolio
+	err = s.db.First(&portfolio, portfolioID).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &FundTransactionResponse{
+		TransactionID: transaction.ID,
+		PortfolioID:   portfolioID,
+		Amount:        req.Amount,
+		Type:          "withdrawal",
+		Status:        "completed",
+		Method:        req.Method,
+		Description:   req.Description,
+		ProcessedAt:   time.Now(),
+		NewBalance:    portfolio.TotalValue,
+	}, nil
+}
+
+// GetCashBalance returns the available cash balance in a portfolio
+func (s *PortfolioService) GetCashBalance(portfolioID, userID uuid.UUID) (decimal.Decimal, error) {
+	// Verify portfolio ownership
+	var portfolio models.Portfolio
+	err := s.db.Where("id = ? AND user_id = ?", portfolioID, userID).First(&portfolio).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return decimal.Zero, errors.New("portfolio not found")
+		}
+		return decimal.Zero, err
+	}
+
+	var cashPosition models.Position
+	err = s.db.Where("portfolio_id = ? AND symbol = ?", portfolioID, "CASH").First(&cashPosition).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return decimal.Zero, nil // No cash position means zero balance
+		}
+		return decimal.Zero, err
+	}
+
+	return cashPosition.Quantity, nil
+}
+
+// GetTransactionHistory returns transaction history for a portfolio
+func (s *PortfolioService) GetTransactionHistory(portfolioID, userID uuid.UUID, limit int) ([]models.Transaction, error) {
+	// Verify portfolio ownership
+	var portfolio models.Portfolio
+	err := s.db.Where("id = ? AND user_id = ?", portfolioID, userID).First(&portfolio).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("portfolio not found")
+		}
+		return nil, err
+	}
+
+	var transactions []models.Transaction
+	query := s.db.Where("portfolio_id = ?", portfolioID).Order("executed_at DESC")
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	err = query.Find(&transactions).Error
+	return transactions, err
 }

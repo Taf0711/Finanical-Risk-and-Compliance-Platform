@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
@@ -120,6 +121,20 @@ func (s *AuthService) generateToken(user *models.User) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.jwtSecret))
+}
+
+// GenerateTokenForUser creates a JWT token for the provided user (exported for handlers)
+func (s *AuthService) GenerateTokenForUser(user *models.User) (string, error) {
+	return s.generateToken(user)
+}
+
+// GetUserByID fetches a user by UUID
+func (s *AuthService) GetUserByID(id uuid.UUID) (*models.User, error) {
+	var user models.User
+	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
 // ValidateToken validates a JWT token

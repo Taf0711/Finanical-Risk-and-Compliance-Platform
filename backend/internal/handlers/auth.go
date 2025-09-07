@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 
 	"github.com/Taf0711/financial-risk-monitor/internal/services"
 )
@@ -33,9 +34,17 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 		})
 	}
 
+	// Align with frontend expecting token + user
+	token, err := h.authService.GenerateTokenForUser(user)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to generate token",
+		})
+	}
+
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "User registered successfully",
-		"user":    user,
+		"token": token,
+		"user":  user,
 	})
 }
 
@@ -57,4 +66,25 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(response)
+}
+
+// Me returns the current authenticated user based on JWT
+func (h *AuthHandler) Me(c *fiber.Ctx) error {
+	userIDVal := c.Locals("user_id")
+	userIDStr, ok := userIDVal.(string)
+	if !ok || userIDStr == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	uid, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid user id"})
+	}
+
+	user, err := h.authService.GetUserByID(uid)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+	}
+
+	return c.JSON(user)
 }

@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Taf0711/financial-risk-monitor/internal/database"
-	"github.com/Taf0711/financial-risk-monitor/internal/marketdata/providers"
+	"github.com/Taf0711/financial-risk-monitor/internal/marketdata"
 	"github.com/Taf0711/financial-risk-monitor/internal/models"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/calculator"
 )
@@ -25,87 +25,174 @@ type RiskEngineService struct {
 	alertService  *AlertService
 }
 
-// MockMarketDataProvider provides mock data for testing and demonstration
-type MockMarketDataProvider struct{}
+// MarketDataProviderAdapter adapts the market data service to the calculator interface
+type MarketDataProviderAdapter struct {
+	marketDataService *marketdata.Service
+}
 
-func (m *MockMarketDataProvider) GetAverageDailyVolume(symbol string) float64 {
-	// Return mock daily volumes based on asset type
-	switch {
-	case symbol == "BTC":
-		return 2000000.0 // 2M BTC daily
-	case symbol == "ETH":
-		return 5000000.0 // 5M ETH daily
-	case symbol == "AAPL" || symbol == "GOOGL" || symbol == "MSFT":
-		return 50000000.0 // 50M shares daily
-	case symbol == "GOLD":
-		return 100000.0 // 100K oz daily
-	default:
-		return 1000000.0 // 1M default
+func NewMarketDataProviderAdapter(service *marketdata.Service) *MarketDataProviderAdapter {
+	return &MarketDataProviderAdapter{
+		marketDataService: service,
 	}
 }
 
-func (m *MockMarketDataProvider) GetBidAskSpread(symbol string) float64 {
-	// Return mock spreads as percentages
+func (m *MarketDataProviderAdapter) GetAverageDailyVolume(symbol string) float64 {
+	// Try to get recent historical data to calculate average volume
+	historicalData, err := m.marketDataService.GetHistoricalData(symbol, "1mo")
+	if err != nil || len(historicalData.DataPoints) == 0 {
+		// Fallback to realistic estimates based on market cap and asset type
+		return m.estimateVolumeFromSymbol(symbol)
+	}
+
+	// Calculate average volume from historical data
+	totalVolume := int64(0)
+	validDays := 0
+	for _, point := range historicalData.DataPoints {
+		if point.Volume > 0 {
+			totalVolume += point.Volume
+			validDays++
+		}
+	}
+
+	if validDays > 0 {
+		return float64(totalVolume) / float64(validDays)
+	}
+
+	return m.estimateVolumeFromSymbol(symbol)
+}
+
+func (m *MarketDataProviderAdapter) GetBidAskSpread(symbol string) float64 {
+	// Try to get real-time quote to calculate actual spread
+	_, err := m.marketDataService.GetRealtimeQuote(symbol)
+	if err != nil {
+		// Fallback to estimated spreads based on asset characteristics
+		return m.estimateSpreadFromSymbol(symbol)
+	}
+
+	// For now, return estimated spread since quote might not have bid/ask
+	// In a real implementation, you'd get this from order book data
+	return m.estimateSpreadFromSymbol(symbol)
+}
+
+func (m *MarketDataProviderAdapter) GetMarketCap(symbol string) float64 {
+	// Try to get company info which might include market cap
+	companyInfo, err := m.marketDataService.GetCompanyInfo(symbol)
+	if err != nil {
+		return m.estimateMarketCapFromSymbol(symbol)
+	}
+
+	// For now, return estimated market cap since company info might not include it
+	// In a real implementation, you'd get this from fundamental data
+	_ = companyInfo
+	return m.estimateMarketCapFromSymbol(symbol)
+}
+
+func (m *MarketDataProviderAdapter) GetMarketDepth(symbol string) *calculator.MarketDepth {
+	// In a real implementation, this would fetch actual order book data
+	// For now, generate realistic order book based on current price
+	quote, err := m.marketDataService.GetRealtimeQuote(symbol)
+	if err != nil {
+		return m.generateRealisticOrderBook(symbol, 100.0) // Default price
+	}
+
+	return m.generateRealisticOrderBook(symbol, quote.Price)
+}
+
+// Helper methods for fallback estimates
+func (m *MarketDataProviderAdapter) estimateVolumeFromSymbol(symbol string) float64 {
+	// Use market cap tiers to estimate volume
+	marketCap := m.estimateMarketCapFromSymbol(symbol)
+
+	// Volume typically correlates with market cap and volatility
 	switch {
-	case symbol == "BTC" || symbol == "ETH":
-		return 0.001 // 0.1% spread for crypto
-	case symbol == "AAPL" || symbol == "GOOGL" || symbol == "MSFT":
-		return 0.0005 // 0.05% spread for large cap stocks
-	case symbol == "GOLD" || symbol == "SILVER":
-		return 0.002 // 0.2% spread for commodities
+	case marketCap >= 1000000000000: // $1T+ mega cap
+		return 50000000.0
+	case marketCap >= 200000000000: // $200B+ large cap
+		return 25000000.0
+	case marketCap >= 10000000000: // $10B+ mid cap
+		return 5000000.0
+	case marketCap >= 2000000000: // $2B+ small cap
+		return 1000000.0
 	default:
-		return 0.001 // 0.1% default
+		return 500000.0 // Micro cap
 	}
 }
 
-func (m *MockMarketDataProvider) GetMarketCap(symbol string) float64 {
-	// Return mock market caps in billions
+func (m *MarketDataProviderAdapter) estimateSpreadFromSymbol(symbol string) float64 {
+	// Estimate spreads based on asset characteristics and market cap
+	marketCap := m.estimateMarketCapFromSymbol(symbol)
+
+	// Larger market cap typically means tighter spreads
 	switch {
-	case symbol == "BTC":
-		return 850000000000.0 // $850B
-	case symbol == "ETH":
-		return 350000000000.0 // $350B
-	case symbol == "AAPL":
-		return 3000000000000.0 // $3T
-	case symbol == "GOOGL":
-		return 1800000000000.0 // $1.8T
-	case symbol == "MSFT":
-		return 2800000000000.0 // $2.8T
+	case marketCap >= 1000000000000: // $1T+ mega cap
+		return 0.00005 // 0.005%
+	case marketCap >= 200000000000: // $200B+ large cap
+		return 0.0001 // 0.01%
+	case marketCap >= 10000000000: // $10B+ mid cap
+		return 0.0003 // 0.03%
+	case marketCap >= 2000000000: // $2B+ small cap
+		return 0.001 // 0.1%
 	default:
-		return 50000000000.0 // $50B default
+		return 0.005 // 0.5% for micro cap
 	}
 }
 
-func (m *MockMarketDataProvider) GetMarketDepth(symbol string) *calculator.MarketDepth {
-	// Return mock market depth with order book levels
-	var bidLevels, askLevels []calculator.PriceLevel
-
-	// Create mock bid/ask levels based on symbol
-	basePrice := 100.0 // Mock base price
-	switch {
-	case symbol == "BTC":
-		basePrice = 45000.0
-	case symbol == "ETH":
-		basePrice = 3000.0
-	case symbol == "AAPL":
-		basePrice = 150.0
-	case symbol == "GOOGL":
-		basePrice = 2800.0
-	case symbol == "MSFT":
-		basePrice = 300.0
+func (m *MarketDataProviderAdapter) estimateMarketCapFromSymbol(symbol string) float64 {
+	// Realistic market cap estimates based on known symbols
+	knownMarketCaps := map[string]float64{
+		"AAPL":   3200000000000,  // $3.2T
+		"GOOGL":  1800000000000,  // $1.8T
+		"MSFT":   3000000000000,  // $3.0T
+		"AMZN":   1500000000000,  // $1.5T
+		"TSLA":   800000000000,   // $800B
+		"JPM":    450000000000,   // $450B
+		"BAC":    250000000000,   // $250B
+		"GS":     110000000000,   // $110B
+		"MS":     150000000000,   // $150B
+		"WFC":    180000000000,   // $180B
+		"BTC":    900000000000,   // $900B (crypto market cap)
+		"ETH":    450000000000,   // $450B
+		"GOLD":   13000000000000, // $13T (gold market)
+		"SILVER": 1500000000000,  // $1.5T
+		"OIL":    5000000000000,  // $5T (oil market)
 	}
 
-	// Create 5 bid levels and 5 ask levels
+	if cap, exists := knownMarketCaps[symbol]; exists {
+		return cap
+	}
+
+	// Default to mid-cap for unknown symbols
+	return 5000000000 // $5B
+}
+
+func (m *MarketDataProviderAdapter) generateRealisticOrderBook(symbol string, currentPrice float64) *calculator.MarketDepth {
+	// Generate realistic order book levels around current price
+	spread := m.estimateSpreadFromSymbol(symbol)
+	halfSpread := currentPrice * spread / 2
+
+	bidLevels := []calculator.PriceLevel{}
+	askLevels := []calculator.PriceLevel{}
+
+	// Generate 5 levels on each side
 	for i := 0; i < 5; i++ {
+		levelSpread := halfSpread * (1 + float64(i)*0.5)
+
+		// Bid levels (below current price)
+		bidPrice := currentPrice - levelSpread
+		bidQuantity := 5000.0 / (1 + float64(i)*0.3) // Decreasing quantity
 		bidLevels = append(bidLevels, calculator.PriceLevel{
-			Price:    basePrice * (1.0 - float64(i+1)*0.001), // Slightly below base price
-			Quantity: 1000.0 / float64(i+1),                  // Decreasing quantity
-			Orders:   10 - i,                                 // Decreasing order count
+			Price:    bidPrice,
+			Quantity: bidQuantity,
+			Orders:   25 - i*3, // Decreasing order count
 		})
+
+		// Ask levels (above current price)
+		askPrice := currentPrice + levelSpread
+		askQuantity := 4500.0 / (1 + float64(i)*0.3) // Decreasing quantity
 		askLevels = append(askLevels, calculator.PriceLevel{
-			Price:    basePrice * (1.0 + float64(i+1)*0.001), // Slightly above base price
-			Quantity: 1000.0 / float64(i+1),                  // Decreasing quantity
-			Orders:   10 - i,                                 // Decreasing order count
+			Price:    askPrice,
+			Quantity: askQuantity,
+			Orders:   22 - i*3, // Decreasing order count
 		})
 	}
 
@@ -117,14 +204,27 @@ func (m *MockMarketDataProvider) GetMarketDepth(symbol string) *calculator.Marke
 }
 
 func NewRiskEngineService() *RiskEngineService {
-	// Create a real market data provider using Alpaca
-	// Note: In production, this should get API keys from config
-	alpacaProvider := providers.NewAlpacaProvider("", "") // Will use fallback data if no keys
+	// Create market data service configuration
+	config := &marketdata.ServiceConfig{
+		PrimaryProvider:   "alpaca",
+		FallbackProviders: []string{},
+		CacheTTL:          5 * time.Minute,
+		RateLimits: map[string]marketdata.RateLimitConfig{
+			"alpaca": {
+				RequestsPerMinute: 200,
+				BurstLimit:        10,
+			},
+		},
+	}
+
+	// Create market data service and adapter
+	marketDataService := marketdata.NewService(config, database.GetRedis())
+	marketDataAdapter := NewMarketDataProviderAdapter(marketDataService)
 
 	return &RiskEngineService{
 		db:            database.GetDB(),
-		varCalculator: calculator.NewVaRCalculator(1000000.0), // Mock portfolio value
-		liquidityCalc: calculator.NewLiquidityCalculator(alpacaProvider),
+		varCalculator: calculator.NewVaRCalculator(1000000.0, 252), // Portfolio value and lookback days
+		liquidityCalc: calculator.NewLiquidityCalculator(marketDataAdapter),
 		alertService:  NewAlertService(),
 	}
 }
@@ -299,10 +399,25 @@ type VaRImpactResult struct {
 func (res *RiskEngineService) calculateVaRImpact(tx *models.Transaction, portfolio *models.Portfolio, thresholds *models.RiskThresholds) (*VaRImpactResult, error) {
 	// Calculate current VaR using the calculator
 	priceHistory := make(map[string][]float64) // Mock price history - would need real data
-	currentVaRResult, err := res.varCalculator.CalculateVaR(portfolio.Positions, priceHistory, 1)
-	if err != nil {
-		return nil, err
+	// Use enhanced VaR calculation with filtered historical method
+	returns := []float64{} // Mock returns - would need real price data
+	for _, prices := range priceHistory {
+		if len(prices) > 1 {
+			for i := 1; i < len(prices); i++ {
+				ret := (prices[i] - prices[i-1]) / prices[i-1]
+				returns = append(returns, ret)
+			}
+		}
 	}
+
+	var currentVaR95 float64
+	if len(returns) > 0 {
+		currentVaR95 = res.varCalculator.CalculateFilteredHistoricalVaR(returns, 0.95)
+	} else {
+		currentVaR95 = portfolio.TotalValue.InexactFloat64() * 0.05 // 5% fallback
+	}
+
+	currentVaRResult := struct{ VaR95 float64 }{VaR95: currentVaR95}
 
 	// Simulate trade impact (simplified)
 	// In production, this would recalculate VaR with the new position
@@ -405,7 +520,21 @@ type PositionViolation struct {
 
 func (res *RiskEngineService) checkLiquidityImpact(tx *models.Transaction, portfolio *models.Portfolio, thresholds *models.RiskThresholds) *LiquidityResult {
 	// Get current liquidity using the calculator
-	liquidityResult, err := res.liquidityCalc.CalculateLiquidity(portfolio.Positions, portfolio.TotalValue.InexactFloat64())
+	// Use enhanced liquidity calculation
+	liquidityMetrics, err := res.liquidityCalc.CalculateAdvancedLiquidityRisk(portfolio.Positions)
+	if err != nil {
+		// Return simplified result if calculation fails
+		return &LiquidityResult{
+			Impact: decimal.NewFromFloat(0.05),
+		}
+	}
+
+	// Convert to expected format
+	liquidityResult := struct {
+		LiquidityRatio float64
+	}{
+		LiquidityRatio: liquidityMetrics.LiquidityScore,
+	}
 	if err != nil {
 		// Return simplified result if calculation fails
 		return &LiquidityResult{
@@ -562,14 +691,24 @@ func (res *RiskEngineService) MonitorPortfolioRisk(portfolioID uuid.UUID) error 
 		return err
 	}
 
-	// Calculate current VaR
-	priceHistory := make(map[string][]float64) // Mock price history
-	varResult, err := res.varCalculator.CalculateVaR(portfolio.Positions, priceHistory, 1)
-	if err != nil {
-		return err
+	// Calculate current VaR using enhanced method
+	returns := []float64{} // Mock returns - would need real price data
+	for range portfolio.Positions {
+		// Generate mock returns for each position
+		for i := 0; i < 30; i++ {
+			ret := (rand.Float64() - 0.5) * 0.04 // ±2% daily change
+			returns = append(returns, ret)
+		}
 	}
 
-	varValue := decimal.NewFromFloat(varResult.VaR95)
+	var currentVaR95 float64
+	if len(returns) > 0 {
+		currentVaR95 = res.varCalculator.CalculateFilteredHistoricalVaR(returns, 0.95)
+	} else {
+		currentVaR95 = portfolio.TotalValue.InexactFloat64() * 0.05 // 5% fallback
+	}
+
+	varValue := decimal.NewFromFloat(currentVaR95)
 
 	// Check VaR against thresholds
 	if varValue.GreaterThan(thresholds.MaxVaR95) {
@@ -581,13 +720,13 @@ func (res *RiskEngineService) MonitorPortfolioRisk(portfolioID uuid.UUID) error 
 		)
 	}
 
-	// Calculate liquidity
-	liquidityResult, err := res.liquidityCalc.CalculateLiquidity(portfolio.Positions, portfolio.TotalValue.InexactFloat64())
+	// Calculate liquidity using enhanced method
+	liquidityMetrics, err := res.liquidityCalc.CalculateAdvancedLiquidityRisk(portfolio.Positions)
 	if err != nil {
 		return err
 	}
 
-	liquidityValue := decimal.NewFromFloat(liquidityResult.LiquidityRatio)
+	liquidityValue := decimal.NewFromFloat(liquidityMetrics.LiquidityScore)
 
 	// Check liquidity against thresholds
 	if liquidityValue.LessThan(thresholds.MinLiquidityRatio) {
@@ -678,9 +817,21 @@ func (res *RiskEngineService) CalculateVaR(req VaRCalculationRequest) (*VaRResul
 		priceHistory[position.Symbol] = prices
 	}
 
-	// Use the calculator
-	calcResult, err := res.varCalculator.CalculateVaR(portfolio.Positions, priceHistory, req.TimeHorizon)
-	if err != nil {
+	// Use enhanced VaR calculation
+	returns := []float64{}
+	for _, prices := range priceHistory {
+		if len(prices) > 1 {
+			for i := 1; i < len(prices); i++ {
+				ret := (prices[i] - prices[i-1]) / prices[i-1]
+				returns = append(returns, ret)
+			}
+		}
+	}
+
+	var currentVaR95 float64
+	if len(returns) > 0 {
+		currentVaR95 = res.varCalculator.CalculateFilteredHistoricalVaR(returns, req.ConfidenceLevel)
+	} else {
 		// Fallback to simple calculation
 		varValue := portfolio.TotalValue.Mul(decimal.NewFromFloat(0.05)) // 5% VaR
 		threshold := portfolio.TotalValue.Mul(decimal.NewFromFloat(0.08))
@@ -707,7 +858,7 @@ func (res *RiskEngineService) CalculateVaR(req VaRCalculationRequest) (*VaRResul
 	}
 
 	// Convert to service result format
-	varValue := decimal.NewFromFloat(calcResult.VaR95)
+	varValue := decimal.NewFromFloat(currentVaR95)
 	threshold := portfolio.TotalValue.Mul(decimal.NewFromFloat(0.08))
 
 	status := "SAFE"
@@ -758,8 +909,8 @@ func (res *RiskEngineService) CalculateLiquidityRisk(portfolioID uuid.UUID) (*Li
 		}, nil
 	}
 
-	// Use the calculator
-	calcResult, err := res.liquidityCalc.CalculateLiquidity(portfolio.Positions, portfolio.TotalValue.InexactFloat64())
+	// Use the enhanced liquidity calculator
+	liquidityMetrics, err := res.liquidityCalc.CalculateAdvancedLiquidityRisk(portfolio.Positions)
 	if err != nil {
 		// Fallback calculation based on position liquidity tags
 		totalValue := decimal.Zero
@@ -795,20 +946,35 @@ func (res *RiskEngineService) CalculateLiquidityRisk(portfolioID uuid.UUID) (*Li
 	}
 
 	// Convert to service result format
-	liquidityRatio := decimal.NewFromFloat(calcResult.LiquidityRatio)
+	liquidityRatio := decimal.NewFromFloat(liquidityMetrics.LiquidityScore)
 
 	riskAssessment := "LOW_RISK"
-	if calcResult.LiquidityRatio < 0.3 {
+	if liquidityMetrics.LiquidityScore < 0.3 {
 		riskAssessment = "HIGH_RISK"
-	} else if calcResult.LiquidityRatio < 0.7 {
+	} else if liquidityMetrics.LiquidityScore < 0.7 {
 		riskAssessment = "MEDIUM_RISK"
+	}
+
+	// Calculate average time to liquidate from the metrics
+	avgTimeToLiquidate := 0.0
+	count := 0
+	for key, time := range liquidityMetrics.TimeToLiquidate {
+		if key != "" {
+			avgTimeToLiquidate += time
+			count++
+		}
+	}
+	if count > 0 {
+		avgTimeToLiquidate /= float64(count)
+	} else {
+		avgTimeToLiquidate = 3.0 // Default
 	}
 
 	return &LiquidityResult{
 		PortfolioID:     portfolioID,
 		LiquidityRatio:  liquidityRatio,
-		LiquidityScore:  calcResult.LiquidityHealth,
-		DaysToLiquidate: decimal.NewFromFloat(calcResult.NormalMarketDays),
+		LiquidityScore:  "HIGH", // Will be determined by score
+		DaysToLiquidate: decimal.NewFromFloat(avgTimeToLiquidate),
 		RiskAssessment:  riskAssessment,
 		CalculatedAt:    time.Now(),
 	}, nil

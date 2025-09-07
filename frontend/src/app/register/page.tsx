@@ -7,27 +7,28 @@ import { z } from 'zod';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import { useAuth } from '@/hooks/useAuth';
-import { RegisterData } from '@/types';
+import { useAuth, RegisterData } from '@/contexts/AuthContext';
 
 const registerSchema = z.object({
   first_name: z.string().min(2, 'First name must be at least 2 characters'),
   last_name: z.string().min(2, 'Last name must be at least 2 characters'),
   email: z.string().email('Invalid email address'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
   confirmPassword: z.string()
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
 });
 
-type RegisterFormData = z.infer<typeof registerSchema>;
+type RegisterFormData = RegisterData & {
+  confirmPassword: string;
+};
 
 export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
-  const { register: registerUser, loading } = useAuth();
+  const { register: registerUser, isLoading } = useAuth();
 
   const {
     register,
@@ -41,7 +42,7 @@ export default function RegisterPage() {
     try {
       setError('');
       const { confirmPassword, ...registerData } = data;
-      await registerUser(registerData as RegisterData);
+      await registerUser(registerData);
     } catch (err: any) {
       setError(err.message);
     }
@@ -73,7 +74,7 @@ export default function RegisterPage() {
               </svg>
             </motion.div>
             <h1 className="text-3xl font-bold text-white mb-2">Create Account</h1>
-            <p className="text-blue-100/80">Join Risk Monitor today</p>
+            <p className="text-blue-100/80">Join the Financial Risk Monitor platform</p>
           </div>
 
           {/* Error Message */}
@@ -88,7 +89,7 @@ export default function RegisterPage() {
           )}
 
           {/* Register Form */}
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
             {/* Name Fields */}
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -100,13 +101,12 @@ export default function RegisterPage() {
                   type="text"
                   id="first_name"
                   className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-blue-100/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                  placeholder="John"
+                  placeholder="First name"
                 />
                 {errors.first_name && (
                   <p className="mt-1 text-sm text-red-300">{errors.first_name.message}</p>
                 )}
               </div>
-              
               <div>
                 <label htmlFor="last_name" className="block text-sm font-medium text-blue-100 mb-2">
                   Last Name
@@ -116,7 +116,7 @@ export default function RegisterPage() {
                   type="text"
                   id="last_name"
                   className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-blue-100/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                  placeholder="Doe"
+                  placeholder="Last name"
                 />
                 {errors.last_name && (
                   <p className="mt-1 text-sm text-red-300">{errors.last_name.message}</p>
@@ -134,7 +134,7 @@ export default function RegisterPage() {
                 type="email"
                 id="email"
                 className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-blue-100/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                placeholder="john@example.com"
+                placeholder="Enter your email"
               />
               {errors.email && (
                 <p className="mt-1 text-sm text-red-300">{errors.email.message}</p>
@@ -152,7 +152,7 @@ export default function RegisterPage() {
                   type={showPassword ? 'text' : 'password'}
                   id="password"
                   className="w-full px-4 py-3 pr-12 bg-white/10 border border-white/20 rounded-lg text-white placeholder-blue-100/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                  placeholder="Create a strong password"
+                  placeholder="Create a password"
                 />
                 <button
                   type="button"
@@ -201,19 +201,19 @@ export default function RegisterPage() {
               )}
             </div>
 
-            {/* Terms and Privacy */}
-            <div className="flex items-start">
+            {/* Terms and Conditions */}
+            <div className="flex items-center">
               <input
                 type="checkbox"
                 required
-                className="w-4 h-4 text-blue-600 bg-white/10 border-white/20 rounded focus:ring-blue-500 focus:ring-2 mt-1"
+                className="w-4 h-4 text-blue-600 bg-white/10 border-white/20 rounded focus:ring-blue-500 focus:ring-2"
               />
               <span className="ml-2 text-sm text-blue-100">
                 I agree to the{' '}
                 <Link href="/terms" className="text-blue-300 hover:text-blue-200 underline">
                   Terms of Service
-                </Link>
-                {' '}and{' '}
+                </Link>{' '}
+                and{' '}
                 <Link href="/privacy" className="text-blue-300 hover:text-blue-200 underline">
                   Privacy Policy
                 </Link>
@@ -225,10 +225,10 @@ export default function RegisterPage() {
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               type="submit"
-              disabled={loading}
+              disabled={isLoading}
               className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? (
+              {isLoading ? (
                 <div className="flex items-center justify-center">
                   <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>

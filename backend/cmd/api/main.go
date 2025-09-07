@@ -88,7 +88,7 @@ func main() {
 	}
 	marketDataService := marketdata.NewService(marketDataConfig, database.GetRedis())
 
-	// Register Alpaca provider with paper trading credentials
+	// Register market data providers
 	alpacaAPIKey := os.Getenv("ALPACA_API_KEY")
 	alpacaSecretKey := os.Getenv("ALPACA_SECRET_KEY")
 
@@ -103,28 +103,47 @@ func main() {
 	} else {
 		log.Printf("Initializing Alpaca provider with demo credentials")
 	}
-	alpacaProvider := providers.NewAlpacaProvider(alpacaAPIKey, alpacaSecretKey)
-	marketDataService.RegisterProvider("alpaca", alpacaProvider)
+	// Switch to AlphaVantage provider
+	alphaKey := cfg.MarketData.AlphaVantageKey
+	if alphaKey == "" {
+		log.Println("Warning: ALPHAVANTAGE_API_KEY not configured; market data may be limited.")
+	}
+	alphaProvider := providers.NewAlphaVantageProvider(alphaKey)
+	marketDataService.RegisterProvider("alphavantage", alphaProvider)
+
+	// Initialize WebSocket hub for real-time communication
+	simpleHub := wsHandler.NewSimpleHub()
+	go simpleHub.Run()
+
+	// Initialize advanced risk service
+	advancedRiskService := services.NewAdvancedRiskService(tradingService)
+	log.Println("📊 Advanced Risk Service initialized")
+
+	// Initialize realtime alert service for additional monitoring
+	realtimeAlertService := services.NewRealtimeAlertService(simpleHub, tradingService, advancedRiskService)
+	realtimeAlertService.Start()
+	log.Println("🔔 Realtime Alert Service started")
+
+	// Initialize regular alert service for trading alerts handler
+	alertService := services.NewAlertService()
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
 	portfolioHandler := handlers.NewPortfolioHandler()
 	transactionHandler := handlers.NewTransactionHandler()
 	riskHandler := handlers.NewRiskHandler(&cfg.Risk)
+	professionalRiskHandler := handlers.NewProfessionalRiskHandler(&cfg.Risk, marketDataService)
 	alertHandler := handlers.NewAlertHandler()
 	complianceHandler := handlers.NewComplianceHandler()
 	monteCarloHandler := handlers.NewMonteCarloHandler(portfolioService)
 	marketDataHandler := handlers.NewMarketDataHandler(marketDataService)
 	tradingHandler := handlers.NewTradingHandler(tradingService)
 	adminHandler := handlers.NewAdminHandler(marketDataService)
+	tradingAlertsHandler := handlers.NewTradingAlertsHandler(alertService)
 
 	// Initialize WebSocket hub
 	hub := wsHandler.NewHub()
 	go hub.Run()
-
-	// Initialize simple WebSocket hub for Fiber WebSocket connections
-	simpleHub := wsHandler.NewSimpleHub()
-	go simpleHub.Run()
 
 	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -189,6 +208,9 @@ func main() {
 	// Protected routes
 	protected := api.Group("/protected", middleware.JWTMiddleware(authService))
 
+	// Authenticated user info
+	protected.Get("/auth/me", authHandler.Me)
+
 	// Portfolio routes
 	portfolios := protected.Group("/portfolios")
 	portfolios.Get("/", portfolioHandler.GetPortfolios)
@@ -202,6 +224,12 @@ func main() {
 	portfolios.Post("/:id/positions", portfolioHandler.AddPosition)
 	portfolios.Put("/:id/positions/:positionId", portfolioHandler.UpdatePosition)
 	portfolios.Delete("/:id/positions/:positionId", portfolioHandler.DeletePosition)
+
+	// Fund management routes
+	portfolios.Post("/:id/add-funds", portfolioHandler.AddFunds)
+	portfolios.Post("/:id/withdraw-funds", portfolioHandler.WithdrawFunds)
+	portfolios.Get("/:id/cash-balance", portfolioHandler.GetCashBalance)
+	portfolios.Get("/:id/transactions", portfolioHandler.GetTransactionHistory)
 
 	// Transaction routes
 	transactions := protected.Group("/transactions")
@@ -218,6 +246,13 @@ func main() {
 	risk.Get("/portfolio/:id/var", riskHandler.CalculateVAR)
 	risk.Get("/portfolio/:id/liquidity", riskHandler.CalculateLiquidityRisk)
 	risk.Get("/portfolio/:id/history", riskHandler.GetRiskHistory)
+
+	// Professional risk routes
+	risk.Post("/portfolio/:id/professional-var", professionalRiskHandler.CalculateProfessionalVaR)
+	risk.Post("/portfolio/:id/optimize", professionalRiskHandler.OptimizePortfolio)
+	risk.Get("/portfolio/:id/decomposition", professionalRiskHandler.GetRiskDecomposition)
+	risk.Get("/portfolio/:id/stress-test", professionalRiskHandler.GetStressTestResults)
+	risk.Post("/greeks", professionalRiskHandler.CalculateGreeks)
 
 	// Monte Carlo simulation routes
 	monteCarlo := protected.Group("/monte-carlo")
@@ -282,6 +317,12 @@ func main() {
 	// Admin endpoints
 	admin := app.Group("/api/v1/admin")
 	admin.Post("/update-transaction-prices", adminHandler.UpdateTransactionPrices)
+
+	// Trading Alerts endpoints
+	tradingAlerts := app.Group("/api/v1/trading-alerts")
+	tradingAlerts.Get("/rules", tradingAlertsHandler.GetAlertRules)
+	tradingAlerts.Get("/recent", tradingAlertsHandler.GetTradingAlerts)
+	tradingAlerts.Put("/rules/:id/toggle", tradingAlertsHandler.ToggleAlertRule)
 
 	// WebSocket endpoint
 	app.Use("/ws", func(c *fiber.Ctx) error {

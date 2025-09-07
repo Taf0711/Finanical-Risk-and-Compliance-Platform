@@ -287,9 +287,9 @@ func (a *AlertGeneratorService) generateVelocityAlert(portfolioID uuid.UUID) {
 		PortfolioID: portfolioID,
 		AlertType:   "SUSPICIOUS_ACTIVITY",
 		Severity:    "MEDIUM",
-		Title:       "High Transaction Velocity",
-		Description: "Unusually high number of transactions detected in the last 24 hours. This may indicate suspicious trading patterns.",
-		Source:      "VELOCITY_CHECKER",
+		Title:       "Unusual Trading Pattern",
+		Description: "High frequency trading detected",
+		Source:      "PATTERN_DETECTOR",
 		Status:      "ACTIVE",
 		TriggeredBy: models.JSON{
 			"time_window": "24h",

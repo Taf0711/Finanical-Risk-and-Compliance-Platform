@@ -4,7 +4,6 @@ package handlers
 import (
 	"strconv"
 
-	"github.com/Taf0711/financial-risk-monitor/internal/marketdata/providers"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/calculator"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/simulation"
 	"github.com/Taf0711/financial-risk-monitor/internal/services"
@@ -84,11 +83,11 @@ func (h *MonteCarloHandler) RunSimulation(c *fiber.Ctx) error {
 
 	// Initialize calculators
 	portfolioValue := portfolio.TotalValue.InexactFloat64()
-	varCalculator := calculator.NewVaRCalculator(portfolioValue)
+	varCalculator := calculator.NewVaRCalculator(portfolioValue, 252)
 
-	// Real market data provider using Alpaca
-	alpacaProvider := providers.NewAlpacaProvider("", "")
-	liquidityCalculator := calculator.NewLiquidityCalculator(alpacaProvider)
+	// Use enhanced market data provider (AlphaVantage-backed)
+	enhancedProvider := calculator.NewEnhancedMarketDataProvider("")
+	liquidityCalculator := calculator.NewLiquidityCalculator(enhancedProvider)
 
 	// Create Monte Carlo simulator
 	simulator := simulation.NewMonteCarloSimulator(varCalculator, liquidityCalculator)
@@ -160,9 +159,9 @@ func (h *MonteCarloHandler) RunQuickValidation(c *fiber.Ctx) error {
 
 	// Initialize calculators
 	portfolioValue := portfolio.TotalValue.InexactFloat64()
-	varCalculator := calculator.NewVaRCalculator(portfolioValue)
-	alpacaProvider := providers.NewAlpacaProvider("", "")
-	liquidityCalculator := calculator.NewLiquidityCalculator(alpacaProvider)
+	varCalculator := calculator.NewVaRCalculator(portfolioValue, 252)
+	enhancedProvider := calculator.NewEnhancedMarketDataProvider("")
+	liquidityCalculator := calculator.NewLiquidityCalculator(enhancedProvider)
 
 	// Create simulator and run
 	simulator := simulation.NewMonteCarloSimulator(varCalculator, liquidityCalculator)
@@ -293,9 +292,9 @@ func (h *MonteCarloHandler) CompareSimulations(c *fiber.Ctx) error {
 
 	// Initialize calculators
 	portfolioValue := portfolio.TotalValue.InexactFloat64()
-	varCalculator := calculator.NewVaRCalculator(portfolioValue)
-	alpacaProvider := providers.NewAlpacaProvider("", "")
-	liquidityCalculator := calculator.NewLiquidityCalculator(alpacaProvider)
+	varCalculator := calculator.NewVaRCalculator(portfolioValue, 252)
+	enhancedProvider := calculator.NewEnhancedMarketDataProvider("")
+	liquidityCalculator := calculator.NewLiquidityCalculator(enhancedProvider)
 	simulator := simulation.NewMonteCarloSimulator(varCalculator, liquidityCalculator)
 
 	// Run simulations for each scenario

@@ -1,3 +1,11 @@
+-- Migration: add Alpaca Connect fields to users
+ALTER TABLE users
+ADD COLUMN alpaca_account_id VARCHAR(128),
+ADD COLUMN alpaca_access_token TEXT,
+ADD COLUMN alpaca_refresh_token TEXT,
+ADD COLUMN alpaca_expires_at TIMESTAMP NULL,
+ADD COLUMN alpaca_is_linked BOOLEAN DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS alerts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     portfolio_id UUID NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,

@@ -11,12 +11,47 @@ import (
 	"time"
 )
 
+// MarketDataProvider interface for market data operations
+type MarketDataProvider interface {
+	GetAverageDailyVolume(symbol string) float64
+	GetBidAskSpread(symbol string) float64
+	GetMarketDepth(symbol string) *MarketDepth
+	GetMarketCap(symbol string) float64
+}
+
+// MarketDepth represents order book depth
+type MarketDepth struct {
+	BidLevels []PriceLevel `json:"bid_levels"`
+	AskLevels []PriceLevel `json:"ask_levels"`
+	Timestamp time.Time    `json:"timestamp"`
+}
+
+// PriceLevel represents a price level in the order book
+type PriceLevel struct {
+	Price    float64 `json:"price"`
+	Quantity float64 `json:"quantity"`
+	Orders   int     `json:"orders"`
+}
+
 // ExtendedMarketDataProvider interface extends MarketDataProvider with additional methods
 type ExtendedMarketDataProvider interface {
 	MarketDataProvider
 	GetHistoricalPrices(symbol string, days int) ([]float64, error)
 	GetCurrentPrice(symbol string) (float64, error)
 	GetVolatilityEstimate(symbol string, days int) (float64, error)
+}
+
+// Type aliases for backward compatibility
+type VaRCalculator = EnhancedVaRCalculator
+type LiquidityCalculator = EnhancedLiquidityCalculator
+
+// Constructor aliases for backward compatibility
+func NewVaRCalculator(portfolioValue float64, lookbackDays int) *VaRCalculator {
+	return NewEnhancedVaRCalculator(portfolioValue, lookbackDays)
+}
+
+func NewLiquidityCalculator(marketDataProvider MarketDataProvider) *LiquidityCalculator {
+	return NewEnhancedLiquidityCalculator(marketDataProvider)
 }
 
 // EnhancedMarketDataProvider with real API integration

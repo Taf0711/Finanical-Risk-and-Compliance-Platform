@@ -8,16 +8,45 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/Taf0711/financial-risk-monitor/internal/database"
+	"github.com/Taf0711/financial-risk-monitor/internal/marketdata"
 	"github.com/Taf0711/financial-risk-monitor/internal/models"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/calculator"
 	"github.com/Taf0711/financial-risk-monitor/internal/risk/simulation"
 	"github.com/shopspring/decimal"
 )
 
-// MockMarketDataProvider for testing
-type MockMarketDataProvider struct{}
+// createMarketDataProvider creates a market data provider for the monte carlo tool
+func createMarketDataProvider() calculator.MarketDataProvider {
+	// Create market data service configuration
+	config := &marketdata.ServiceConfig{
+		PrimaryProvider:   "monte_carlo",
+		FallbackProviders: []string{},
+		CacheTTL:          5 * time.Minute,
+		RateLimits: map[string]marketdata.RateLimitConfig{
+			"monte_carlo": {
+				RequestsPerMinute: 1000,
+				BurstLimit:        50,
+			},
+		},
+	}
 
-func (m *MockMarketDataProvider) GetAverageDailyVolume(symbol string) float64 {
+	// Create market data service
+	marketDataService := marketdata.NewService(config, database.GetRedis())
+
+	// Create and return adapter
+	return &MonteCarloMarketDataAdapter{
+		marketDataService: marketDataService,
+	}
+}
+
+// MonteCarloMarketDataAdapter adapts the market data service for monte carlo simulations
+type MonteCarloMarketDataAdapter struct {
+	marketDataService *marketdata.Service
+}
+
+func (m *MonteCarloMarketDataAdapter) GetAverageDailyVolume(symbol string) float64 {
+	// Use realistic simulation data
 	volumes := map[string]float64{
 		"AAPL":  50000000, // 50M shares
 		"GOOGL": 25000000, // 25M shares
@@ -32,7 +61,8 @@ func (m *MockMarketDataProvider) GetAverageDailyVolume(symbol string) float64 {
 	return 1000000 // Default 1M
 }
 
-func (m *MockMarketDataProvider) GetBidAskSpread(symbol string) float64 {
+func (m *MonteCarloMarketDataAdapter) GetBidAskSpread(symbol string) float64 {
+	// Use realistic simulation spreads
 	spreads := map[string]float64{
 		"AAPL":  0.0001, // 0.01%
 		"GOOGL": 0.0001,
@@ -47,7 +77,8 @@ func (m *MockMarketDataProvider) GetBidAskSpread(symbol string) float64 {
 	return 0.001 // Default 0.1%
 }
 
-func (m *MockMarketDataProvider) GetMarketDepth(symbol string) *calculator.MarketDepth {
+func (m *MonteCarloMarketDataAdapter) GetMarketDepth(symbol string) *calculator.MarketDepth {
+	// Generate realistic simulation market depth
 	return &calculator.MarketDepth{
 		BidLevels: []calculator.PriceLevel{
 			{Price: 100.0, Quantity: 1000, Orders: 10},
@@ -61,7 +92,8 @@ func (m *MockMarketDataProvider) GetMarketDepth(symbol string) *calculator.Marke
 	}
 }
 
-func (m *MockMarketDataProvider) GetMarketCap(symbol string) float64 {
+func (m *MonteCarloMarketDataAdapter) GetMarketCap(symbol string) float64 {
+	// Use realistic simulation market caps
 	marketCaps := map[string]float64{
 		"AAPL":  3000000000000,  // $3T
 		"GOOGL": 1500000000000,  // $1.5T
@@ -83,9 +115,9 @@ func main() {
 	// Create test portfolio
 	portfolio := createTestPortfolio()
 
-	// Initialize calculators
-	varCalculator := calculator.NewVaRCalculator(portfolio.TotalValue.InexactFloat64())
-	liquidityCalculator := calculator.NewLiquidityCalculator(&MockMarketDataProvider{})
+	// Initialize calculators with proper parameters
+	varCalculator := calculator.NewVaRCalculator(portfolio.TotalValue.InexactFloat64(), 252) // 252 trading days lookback
+	liquidityCalculator := calculator.NewLiquidityCalculator(createMarketDataProvider())
 
 	// Create Monte Carlo simulator
 	simulator := simulation.NewMonteCarloSimulator(varCalculator, liquidityCalculator)
